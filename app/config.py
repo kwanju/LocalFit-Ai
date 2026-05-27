@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_USER_ID: int = 1
+
 
 class LLMConfig(BaseModel):
     host: str
