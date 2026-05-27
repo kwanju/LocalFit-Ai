@@ -22,6 +22,7 @@ class STTConfig(BaseModel):
     device: str
     compute_type: str
     language: str
+    timeout_sec: float = 30.0
 
 
 class TTSConfig(BaseModel):

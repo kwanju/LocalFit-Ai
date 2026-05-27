@@ -13,6 +13,8 @@ from app.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+_INT16_SCALE = 32768.0  # 2^15: int16 → float32 정규화 상수
+
 
 def _decode_audio(audio_bytes: bytes) -> np.ndarray:
     """Decode WAV bytes or raw int16 PCM bytes to float32 mono array."""
@@ -23,17 +25,18 @@ def _decode_audio(audio_bytes: bytes) -> np.ndarray:
             raw = wf.readframes(wf.getnframes())
         if sampwidth != 2:
             raise ValueError(f"Unsupported PCM sample width: {sampwidth} bytes (expected 2)")
-        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / _INT16_SCALE
         if n_channels > 1:
             pcm = pcm.reshape(-1, n_channels).mean(axis=1)
         return pcm
     # Raw int16 PCM (no header)
-    return np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    return np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / _INT16_SCALE
 
 
 class FasterWhisperAdapter:
     def __init__(self, config: AppConfig) -> None:
         self._lang: str = config.stt.language
+        self._timeout_sec: float = config.stt.timeout_sec
         cfg = config.stt
         logger.info(
             "Loading faster-whisper model=%s device=%s compute_type=%s",
@@ -55,9 +58,15 @@ class FasterWhisperAdapter:
     async def transcribe(self, audio_bytes: bytes, sample_rate: int = 16000) -> STTResult:
         try:
             audio = _decode_audio(audio_bytes)
-            result = await asyncio.to_thread(self._transcribe_sync, audio)
-            logger.info("Transcribed in %dms: %r", result.duration_ms, result.text[:80])
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self._transcribe_sync, audio),
+                timeout=self._timeout_sec,
+            )
+            logger.info("Transcribed in %dms (%d chars)", result.duration_ms, len(result.text))
             return result
+        except TimeoutError:
+            logger.warning("STT transcription timed out after %.1fs", self._timeout_sec)
+            raise
         except Exception as e:
             logger.error("STT transcription failed: %s", e)
             raise
