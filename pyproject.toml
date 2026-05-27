@@ -24,7 +24,8 @@ stt = [
     "torchaudio>=2.3",
 ]
 tts = [
-    "kokoro>=0.9",
+    "qwen-tts>=0.1.1",
+    "torch>=2.4",
 ]
 vad = [
     "silero-vad>=5.1",

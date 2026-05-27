@@ -27,7 +27,6 @@ class STTConfig(BaseModel):
 
 class TTSConfig(BaseModel):
     active: str
-    kokoro: dict[str, str]
     qwen3: dict[str, str]
 
 
