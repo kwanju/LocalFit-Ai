@@ -32,6 +32,10 @@ llm:
 ### keep_alive 관리
 활성 모델만 메모리 상주, 비활성 모델은 디스크에만 존재. Ollama가 첫 호출 시 자동 로드, idle 시 자동 unload.
 
+### Qwen 3.5 thinking 모드
+Qwen 3.5는 기본적으로 thinking 모드가 활성화되어 `message.content`가 빈 문자열로 반환될 수 있다.
+`LLMRequest.think: bool = False`(기본값)로 비활성화하며, 복잡한 추론이 필요한 경우에만 `think=True`를 명시한다.
+
 ### 회고 시점
 **MVP 사용 10회 운동 세션 후** 듀얼 운영 데이터를 보고 단일 모델로 좁힐지 또는 의도별 라우팅 규칙을 정할지 결정한다. 결정 미루기 함정을 막기 위해 명시적 트리거를 설정한다.
 

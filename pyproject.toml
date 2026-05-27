@@ -56,4 +56,5 @@ testpaths = ["tests"]
 markers = [
     "gpu: GPU/CUDA 필요 테스트 (deselect with '-m not gpu')",
     "integration: 외부 서비스(Ollama 등) 필요 테스트",
+    "ollama: Ollama 서버 필요 테스트 (deselect with '-m not ollama')",
 ]
