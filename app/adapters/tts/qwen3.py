@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import io
 import logging
@@ -6,19 +8,25 @@ import time
 import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from app.adapters.tts.protocol import TTSRequest
 from app.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+_INT16_MAX = 32767  # int16 정규화 상수 (float32 [-1, 1] → int16)
 
-def _float32_to_wav(audio, sample_rate: int) -> bytes:
+
+def _float32_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
     """Convert float32 numpy array to 16-bit mono WAV bytes."""
     import numpy as np
 
     buf = io.BytesIO()
-    pcm = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+    pcm = (audio * _INT16_MAX).clip(-_INT16_MAX - 1, _INT16_MAX).astype(np.int16)
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
@@ -36,14 +44,15 @@ class Qwen3TTSAdapter:
 
         ref_audio_path = qwen_cfg.get("ref_audio_path", "")
         if not ref_audio_path:
-            raise ValueError("tts.qwen3.ref_audio_path must be set in config.yaml")
+            raise ValueError("config.yaml에 tts.qwen3.ref_audio_path를 설정해 주세요.")
 
         ref_file = Path(ref_audio_path)
         if not ref_file.exists():
-            raise FileNotFoundError(f"Reference audio not found: {ref_audio_path}")
+            raise FileNotFoundError(f"참조 음성 파일을 찾을 수 없습니다: {ref_audio_path}")
 
         self._ref_audio_path = str(ref_file)
         self._ref_text: str = qwen_cfg.get("ref_text", "")
+        self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
         model_id: str = qwen_cfg.get("model_id", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
 
         logger.info("Loading Qwen3-TTS model: %s", model_id)
@@ -68,8 +77,14 @@ class Qwen3TTSAdapter:
 
     async def synthesize(self, request: TTSRequest) -> bytes:
         try:
-            audio, sample_rate = await asyncio.to_thread(self._synthesize_sync, request.text)
+            audio, sample_rate = await asyncio.wait_for(
+                asyncio.to_thread(self._synthesize_sync, request.text),
+                timeout=self._timeout_sec,
+            )
             return _float32_to_wav(audio, sample_rate)
+        except TimeoutError:
+            logger.warning("Qwen3-TTS synthesis timed out after %.1fs", self._timeout_sec)
+            raise
         except Exception as e:
             logger.error("Qwen3-TTS synthesis failed: %s", e)
             raise
