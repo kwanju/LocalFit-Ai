@@ -1,0 +1,39 @@
+# LocalFit AI 설정 파일 템플릿
+# 이 파일을 config.yaml로 복사하여 사용하세요.
+# config.yaml은 .gitignore에 포함되어 있습니다.
+
+llm:
+  host: "http://127.0.0.1:11434"   # Ollama 서버 주소 (ADR-002: 로컬만 허용)
+  active: "qwen3.5"                 # 활성 모델 키 (ADR-004)
+  models:
+    qwen3.5: "qwen3.5:9b"          # 기본 코칭 모델
+    gemma4: "gemma4:e4b"           # 경량 대안 모델
+  timeout_sec: 4.0                  # LLM 응답 타임아웃 (PRD 3-1)
+  keep_alive: "10m"                 # Ollama 모델 메모리 유지 시간 (ADR-011)
+
+stt:
+  model: "large-v3-turbo"           # faster-whisper 모델 (ADR-005)
+  device: "cuda"                    # cuda / cpu
+  compute_type: "float16"           # float16 / int8
+  language: "ko"                    # 한국어 고정
+
+tts:
+  active: "kokoro"                  # kokoro / qwen3 (ADR-006)
+  kokoro:
+    voice: "af_heart"               # Kokoro 음성 ID
+    speed: "1.0"
+  qwen3:
+    voice: "default"
+    speed: "1.0"
+
+vad:
+  model: "silero_vad"               # silero-vad (ADR-012)
+  threshold: 0.5                    # 음성 감지 임계값
+  min_silence_ms: 700               # 발화 종료 판정 최소 침묵 구간(ms)
+
+db:
+  path: "data/localfit.db"          # SQLite 파일 경로 (ADR-007)
+
+counting:
+  beat_interval_sec: 2.0            # 운동 박자 간격(초)
+  max_reps: 200                     # 단일 세트 최대 반복 횟수 (안전 한도)
