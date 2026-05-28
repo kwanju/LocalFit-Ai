@@ -18,6 +18,10 @@ IntentType = Literal["body_state", "schedule", "feedback", "goal", "injury", "ge
 _VALID_INTENTS: frozenset[str] = frozenset(get_args(IntentType))
 
 _DEFAULT_TIMEOUT_SEC: float = 4.0
+_CLASSIFY_TEMPERATURE: float = 0.1
+_CLASSIFY_MAX_TOKENS: int = 64
+_RESPOND_TEMPERATURE: float = 0.7
+_RESPOND_MAX_TOKENS: int = 256
 
 
 class IntentClassifier:
@@ -32,8 +36,8 @@ class IntentClassifier:
                 LLMMessage(role="system", content=SAFETY_SYSTEM_PREFIX),
                 LLMMessage(role="user", content=INTENT_CLASSIFY_PROMPT_PREFIX + user_input),
             ],
-            temperature=0.1,
-            max_tokens=64,
+            temperature=_CLASSIFY_TEMPERATURE,
+            max_tokens=_CLASSIFY_MAX_TOKENS,
         )
         try:
             raw = await asyncio.wait_for(self._llm.generate(request), timeout=self._timeout_sec)
@@ -55,8 +59,8 @@ class IntentClassifier:
                 LLMMessage(role="system", content=SAFETY_SYSTEM_PREFIX),
                 LLMMessage(role="user", content=prefix + user_input),
             ],
-            temperature=0.7,
-            max_tokens=256,
+            temperature=_RESPOND_TEMPERATURE,
+            max_tokens=_RESPOND_MAX_TOKENS,
         )
         try:
             return await asyncio.wait_for(self._llm.generate(request), timeout=self._timeout_sec)
