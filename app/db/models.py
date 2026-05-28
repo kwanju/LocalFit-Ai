@@ -41,6 +41,7 @@ class UserProfile(SQLModel, table=True):
     weight_kg: float | None = None
     height_cm: float | None = None
     fitness_level: FitnessLevel = Field(default=FitnessLevel.beginner)
+    goal: str | None = None  # 온보딩 1단계 목표 (PRD 부록 A-1)
     available_times: str = Field(default="[]")  # JSON array
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
