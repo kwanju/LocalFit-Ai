@@ -7,6 +7,8 @@
 import { useCallback, useRef, useState } from "react";
 
 const TARGET_SAMPLE_RATE = 16000;
+// Live streaming: emit ~128ms chunks (a few VAD windows' worth) to the backend.
+const STREAM_CHUNK_MS = 128;
 
 // Inline AudioWorklet: forwards each render quantum of mono PCM to the main
 // thread. Inlined as a Blob so no separate static asset is needed.
@@ -52,6 +54,26 @@ function resampleLinear(input: Float32Array, fromRate: number, toRate: number): 
   return output;
 }
 
+function mergeFrames(frames: Float32Array[], total: number): Float32Array {
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const f of frames) {
+    merged.set(f, offset);
+    offset += f.length;
+  }
+  return merged;
+}
+
+function floatToPcm16Bytes(samples: Float32Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(samples.length * 2);
+  const view = new DataView(out.buffer);
+  for (let i = 0; i < samples.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, samples[i] ?? 0));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return out;
+}
+
 function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
@@ -88,11 +110,14 @@ export interface RecordedAudio {
 interface UseAudio {
   playing: boolean;
   recording: boolean;
+  streaming: boolean;
   micError: string | null;
   playWav: (b64: string) => Promise<void>;
   stopPlayback: () => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<RecordedAudio | null>;
+  startStreaming: (onChunk: (pcmB64: string, sampleRate: number) => void) => Promise<void>;
+  stopStreaming: () => Promise<void>;
 }
 
 export function useAudio(): UseAudio {
@@ -107,6 +132,11 @@ export function useAudio(): UseAudio {
   const captureRateRef = useRef(TARGET_SAMPLE_RATE);
   const [recording, setRecording] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+
+  const streamFramesRef = useRef<Float32Array[]>([]);
+  const streamLenRef = useRef(0);
+  const onChunkRef = useRef<((pcmB64: string, sampleRate: number) => void) | null>(null);
+  const [streaming, setStreaming] = useState(false);
 
   const stopPlayback = useCallback(() => {
     const el = audioElRef.current;
@@ -208,5 +238,79 @@ export function useAudio(): UseAudio {
     return { audioB64: bytesToBase64(wav), sampleRate: TARGET_SAMPLE_RATE };
   }, []);
 
-  return { playing, recording, micError, playWav, stopPlayback, startRecording, stopRecording };
+  // Continuous capture for hands-free live S2S: emits ~128ms 16kHz PCM16 chunks.
+  const startStreaming = useCallback(
+    async (onChunk: (pcmB64: string, sampleRate: number) => void) => {
+      setMicError(null);
+      onChunkRef.current = onChunk;
+      streamFramesRef.current = [];
+      streamLenRef.current = 0;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        });
+        streamRef.current = stream;
+        const ctx = new AudioContext();
+        ctxRef.current = ctx;
+        captureRateRef.current = ctx.sampleRate;
+        const blobUrl = URL.createObjectURL(
+          new Blob([RECORDER_WORKLET], { type: "application/javascript" }),
+        );
+        await ctx.audioWorklet.addModule(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+        const source = ctx.createMediaStreamSource(stream);
+        const node = new AudioWorkletNode(ctx, "localfit-recorder");
+        nodeRef.current = node;
+        const chunkSamples = Math.round((captureRateRef.current * STREAM_CHUNK_MS) / 1000);
+        node.port.onmessage = (event) => {
+          const frame = event.data as Float32Array;
+          streamFramesRef.current.push(frame);
+          streamLenRef.current += frame.length;
+          if (streamLenRef.current < chunkSamples) return;
+          const merged = mergeFrames(streamFramesRef.current, streamLenRef.current);
+          streamFramesRef.current = [];
+          streamLenRef.current = 0;
+          const resampled = resampleLinear(merged, captureRateRef.current, TARGET_SAMPLE_RATE);
+          onChunkRef.current?.(bytesToBase64(floatToPcm16Bytes(resampled)), TARGET_SAMPLE_RATE);
+        };
+        source.connect(node);
+        const sink = ctx.createGain();
+        sink.gain.value = 0;
+        node.connect(sink).connect(ctx.destination);
+        setStreaming(true);
+      } catch (err) {
+        console.warn("Microphone streaming failed", err);
+        setMicError("마이크를 사용할 수 없습니다. 권한을 확인해 주세요.");
+        setStreaming(false);
+      }
+    },
+    [],
+  );
+
+  const stopStreaming = useCallback(async () => {
+    const ctx = ctxRef.current;
+    nodeRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (ctx) await ctx.close();
+    nodeRef.current = null;
+    ctxRef.current = null;
+    streamRef.current = null;
+    onChunkRef.current = null;
+    streamFramesRef.current = [];
+    streamLenRef.current = 0;
+    setStreaming(false);
+  }, []);
+
+  return {
+    playing,
+    recording,
+    streaming,
+    micError,
+    playWav,
+    stopPlayback,
+    startRecording,
+    stopRecording,
+    startStreaming,
+    stopStreaming,
+  };
 }

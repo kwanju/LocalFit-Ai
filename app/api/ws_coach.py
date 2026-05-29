@@ -1,18 +1,25 @@
 """WebSocket /ws/coach — real-time bidirectional coaching.
 
-JSON protocol (client → server): {"type": "start"|"text"|"audio"|"interrupt"|
-"pause"|"resume"|"start_counting"|"stop_counting"|"end", ...}. Server → client:
-"session_started" | "response" | "beat" | "state" | "error" | "session_ended".
+JSON protocol (client → server): {"type": "start"|"text"|"audio"|"listen_start"|
+"audio_chunk"|"listen_stop"|"interrupt"|"pause"|"resume"|"start_counting"|
+"stop_counting"|"end", ...}. Server → client: "session_started" | "response" |
+"beat" | "state" | "error" | "session_ended".
 
 The endpoint stays thin: it owns the socket and translates messages into
 SessionOrchestrator calls (core). Beat events are pushed concurrently while the
 receive loop keeps reading, so an "interrupt" can cancel in-flight LLM/TTS.
+
+Live S2S (hands-free): the client streams 16kHz mono PCM16 chunks ("audio_chunk")
+while "listening". A server-side silero-vad session segments utterances; each
+completed utterance runs the same voice-reply pipeline. Half-duplex — chunks are
+ignored while a reply is in flight (the coach is "speaking").
 """
 
 import asyncio
 import base64
 import logging
 
+import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -29,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
 
+_INT16_SCALE = 32768.0  # int16 <-> float32 normalization
+_LIVE_SAMPLE_RATE = 16000  # silero-vad / STT fixed rate
+
 
 class _CoachConnection:
     """Per-connection coaching session. One DB session for the connection's lifetime."""
@@ -42,12 +52,14 @@ class _CoachConnection:
         llm: object,
         stt: object | None,
         tts: object | None,
+        vad: object | None = None,
     ) -> None:
         self._ws = websocket
         self._config = config
         self._llm = llm
         self._stt = stt
         self._tts = tts
+        self._vad = vad
         self._session_repo = SessionRepository(db_session)
         self._orch: SessionOrchestrator | None = None
         self._send_lock = asyncio.Lock()
@@ -56,6 +68,9 @@ class _CoachConnection:
         # AsyncSession at the same time. interrupt() is intentionally lock-free.
         self._op_lock = asyncio.Lock()
         self._handle_tasks: set[asyncio.Task] = set()
+        # Live S2S streaming state.
+        self._vad_session: object | None = None
+        self._reply_active = False  # half-duplex: True while the coach is responding
 
     async def run(self) -> None:
         try:
@@ -77,6 +92,9 @@ class _CoachConnection:
             "start": self._handle_start,
             "text": self._handle_text,
             "audio": self._handle_audio,
+            "listen_start": self._handle_listen_start,
+            "audio_chunk": self._handle_audio_chunk,
+            "listen_stop": self._handle_listen_stop,
             "interrupt": self._handle_interrupt,
             "pause": self._handle_pause,
             "resume": self._handle_resume,
@@ -193,6 +211,50 @@ class _CoachConnection:
         except Exception as e:  # noqa: BLE001 — surface failures to the client, keep socket alive
             logger.error("Voice coaching reply failed: %s", e)
             await self._send_error("음성 인식 중 오류가 발생했습니다.")
+        finally:
+            self._reply_active = False
+
+    # -- live S2S (streaming VAD) -----------------------------------------
+
+    async def _handle_listen_start(self, _message: dict) -> None:
+        if self._orch is None:
+            await self._send_error("세션이 시작되지 않았습니다.")
+            return
+        if self._vad is None or self._stt is None:
+            await self._send_error("라이브 모드에는 음성 어댑터(VAD/STT)가 필요합니다.")
+            return
+        self._vad_session = self._vad.new_stream()  # type: ignore[attr-defined]
+        self._reply_active = False
+        await self._send({"type": "vad", "event": "listening"})
+
+    async def _handle_audio_chunk(self, message: dict) -> None:
+        # Ignore until listening; ignore while the coach is responding (half-duplex).
+        if self._vad_session is None or self._reply_active:
+            return
+        pcm_b64 = message.get("pcm_b64")
+        if not pcm_b64:
+            return
+        try:
+            raw = base64.b64decode(pcm_b64)
+        except ValueError:
+            return
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / _INT16_SCALE
+        utterances = await asyncio.to_thread(self._vad_session.feed, pcm)  # type: ignore[attr-defined]
+        for utterance in utterances:
+            # One utterance per turn: take the first, drop the rest, go half-duplex.
+            self._reply_active = True
+            self._vad_session.reset()  # type: ignore[attr-defined]
+            audio_bytes = (np.clip(utterance, -1.0, 1.0) * _INT16_SCALE).astype(np.int16).tobytes()
+            await self._send({"type": "vad", "event": "speech_end"})
+            task = asyncio.create_task(self._reply_voice(audio_bytes, _LIVE_SAMPLE_RATE))
+            self._handle_tasks.add(task)
+            task.add_done_callback(self._handle_tasks.discard)
+            break
+
+    async def _handle_listen_stop(self, _message: dict) -> None:
+        if self._vad_session is not None:
+            self._vad_session.reset()  # type: ignore[attr-defined]
+            self._vad_session = None
 
     async def _handle_interrupt(self, _message: dict) -> None:
         if self._orch is not None:
@@ -291,6 +353,7 @@ class _CoachConnection:
             await self._ws.send_json(payload)
 
     async def _cleanup(self) -> None:
+        self._vad_session = None
         tasks = list(self._handle_tasks)
         for task in tasks:
             task.cancel()
@@ -323,5 +386,6 @@ async def ws_coach(websocket: WebSocket, db_session: AsyncSession = Depends(get_
         llm=llm,
         stt=getattr(state, "stt", None),
         tts=getattr(state, "tts", None),
+        vad=getattr(state, "vad", None),
     )
     await connection.run()

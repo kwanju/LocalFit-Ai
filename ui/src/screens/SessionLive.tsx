@@ -2,7 +2,7 @@
 // Composes counting display, chat, quick buttons, mic, and session controls
 // over the session store + audio/wakelock hooks.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/state/session";
 import { useAudio } from "@/hooks/useAudio";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -36,20 +36,25 @@ const EXERCISES: readonly ExerciseOption[] = [
   { name: "플랭크", mode: "timer", target: 30 },
 ];
 
-type MicMode = "hold" | "toggle";
+type MicMode = "hold" | "toggle" | "live";
 
 const MIC_MODES: readonly { mode: MicMode; label: string }[] = [
+  { mode: "live", label: "라이브" },
   { mode: "hold", label: "길게 누르기" },
   { mode: "toggle", label: "탭 전환" },
 ];
 
 export function SessionLive() {
-  const { status, mode, started, serverState, messages, counting, lastAudio, actions } =
+  const { status, mode, started, serverState, messages, counting, lastAudio, liveListening, actions } =
     useSession();
   const audio = useAudio();
   const wakeLock = useWakeLock();
   const [earphoneHint, setEarphoneHint] = useState(false);
-  const [micMode, setMicMode] = useState<MicMode>("hold");
+  const [micMode, setMicMode] = useState<MicMode>("live");
+
+  // Latest playback state for the streaming callback (half-duplex gate).
+  const playingRef = useRef(audio.playing);
+  playingRef.current = audio.playing;
 
   const isVoiceInput = VOICE_INPUT.has(mode);
   const isVoiceOutput = VOICE_OUTPUT.has(mode);
@@ -111,6 +116,42 @@ export function SessionLive() {
     const recorded = await audio.stopRecording();
     if (recorded) actions.sendAudio(recorded.audioB64, recorded.sampleRate);
   };
+
+  // Live hands-free: stream chunks continuously; gate on playback so the coach's
+  // own voice isn't captured and re-transcribed (half-duplex).
+  const startLive = () => {
+    if (!started) return;
+    actions.listenStart();
+    void audio.startStreaming((pcmB64, sampleRate) => {
+      if (!playingRef.current) actions.sendAudioChunk(pcmB64, sampleRate);
+    });
+  };
+  const stopLive = () => {
+    void audio.stopStreaming();
+    actions.listenStop();
+  };
+  const toggleLive = () => (audio.streaming ? stopLive() : startLive());
+
+  // Stop live streaming if the user leaves live mode, switches to a non-voice
+  // input mode, ends the session, or unmounts.
+  useEffect(() => {
+    if ((micMode !== "live" || !started || !isVoiceInput) && audio.streaming) {
+      void audio.stopStreaming();
+      actions.listenStop();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micMode, started, isVoiceInput, audio.streaming]);
+
+  useEffect(() => {
+    return () => void audio.stopStreaming();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const liveStatus = audio.playing
+    ? "코치 응답 중…"
+    : liveListening
+      ? "듣는 중…"
+      : "처리 중…";
 
   const disabled = !started;
 
@@ -178,12 +219,15 @@ export function SessionLive() {
         {isVoiceInput && (
           <MicControl
             disabled={disabled}
-            recording={audio.recording}
             micError={audio.micError}
             micMode={micMode}
             onMicModeChange={setMicMode}
-            onStart={startMic}
-            onStop={() => void stopMic()}
+            recording={audio.recording}
+            onRecordStart={startMic}
+            onRecordStop={() => void stopMic()}
+            streaming={audio.streaming}
+            liveStatus={liveStatus}
+            onLiveToggle={toggleLive}
           />
         )}
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -279,23 +323,30 @@ function CountingControls({
 
 function MicControl({
   disabled,
-  recording,
   micError,
   micMode,
   onMicModeChange,
-  onStart,
-  onStop,
+  recording,
+  onRecordStart,
+  onRecordStop,
+  streaming,
+  liveStatus,
+  onLiveToggle,
 }: {
   disabled: boolean;
-  recording: boolean;
   micError: string | null;
   micMode: MicMode;
   onMicModeChange: (mode: MicMode) => void;
-  onStart: () => void;
-  onStop: () => void;
+  recording: boolean;
+  onRecordStart: () => void;
+  onRecordStop: () => void;
+  streaming: boolean;
+  liveStatus: string;
+  onLiveToggle: () => void;
 }) {
+  const active = recording || streaming;
   const buttonClass = `w-full rounded-xl px-5 py-6 text-lg font-bold text-white disabled:opacity-40 ${
-    recording ? "bg-rose-600" : "bg-sky-600"
+    active ? "bg-rose-600" : "bg-sky-600"
   }`;
 
   return (
@@ -315,28 +366,37 @@ function MicControl({
           </button>
         ))}
       </div>
-      {micMode === "hold" ? (
+      {micMode === "hold" && (
         <button
           type="button"
           disabled={disabled}
-          onPointerDown={onStart}
-          onPointerUp={onStop}
+          onPointerDown={onRecordStart}
+          onPointerUp={onRecordStop}
           onPointerLeave={() => {
-            if (recording) onStop();
+            if (recording) onRecordStop();
           }}
           className={buttonClass}
         >
           {recording ? "녹음 중… (떼면 전송)" : "길게 눌러 말하기"}
         </button>
-      ) : (
+      )}
+      {micMode === "toggle" && (
         <button
           type="button"
           disabled={disabled}
-          onClick={() => (recording ? onStop() : onStart())}
+          onClick={() => (recording ? onRecordStop() : onRecordStart())}
           className={buttonClass}
         >
           {recording ? "탭하면 종료·전송" : "탭하여 말하기 시작"}
         </button>
+      )}
+      {micMode === "live" && (
+        <>
+          <button type="button" disabled={disabled} onClick={onLiveToggle} className={buttonClass}>
+            {streaming ? "라이브 종료" : "라이브 시작 (핸즈프리)"}
+          </button>
+          {streaming && <p className="text-sm text-sky-400">{liveStatus}</p>}
+        </>
       )}
       {micError && <p className="text-sm text-rose-400">{micError}</p>}
     </div>

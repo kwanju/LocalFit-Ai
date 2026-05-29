@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.llm = None
     app.state.stt = None
     app.state.tts = None
+    app.state.vad = None
 
     try:
         config = load_config()
@@ -52,12 +53,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("DB initialization failed: %s", e)
 
     from app.adapters.llm import get_llm_adapter
-    from app.adapters.stt import get_stt_adapter
+    from app.adapters.stt import get_stt_adapter, get_vad_adapter
     from app.adapters.tts import get_tts_adapter
 
     app.state.llm = _load_adapter("LLM", get_llm_adapter, config)
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
+    app.state.vad = _load_adapter("VAD", get_vad_adapter, config)
 
     # Warm the LLM into VRAM at startup so the first coaching message doesn't
     # cold-load and blow the 4s timeout (best-effort; warmup swallows errors).

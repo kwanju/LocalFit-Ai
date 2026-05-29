@@ -123,6 +123,22 @@ export class CoachSocket {
     this.send({ type: "audio", audio_b64: audioB64, sample_rate: sampleRate });
   }
 
+  // -- live S2S (streaming VAD) -------------------------------------------
+
+  listenStart(): void {
+    this.send({ type: "listen_start" });
+  }
+
+  sendAudioChunk(pcmB64: string, sampleRate: number): void {
+    // Realtime audio: drop if the socket isn't open rather than buffering a flood.
+    if (!this.isOpen) return;
+    this.rawSend({ type: "audio_chunk", pcm_b64: pcmB64, sample_rate: sampleRate });
+  }
+
+  listenStop(): void {
+    this.send({ type: "listen_stop" });
+  }
+
   interrupt(): void {
     this.send({ type: "interrupt" });
   }

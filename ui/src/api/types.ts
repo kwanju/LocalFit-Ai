@@ -37,6 +37,9 @@ export type ClientMessage =
   | { type: "start"; mode: SessionMode; routine_id?: number }
   | { type: "text"; text: string }
   | { type: "audio"; audio_b64: string; sample_rate: number }
+  | { type: "listen_start" }
+  | { type: "audio_chunk"; pcm_b64: string; sample_rate: number }
+  | { type: "listen_stop" }
   | { type: "interrupt" }
   | { type: "pause" }
   | { type: "resume" }
@@ -86,13 +89,19 @@ export interface SessionEndedMessage {
   state: SessionState | null;
 }
 
+export interface VadMessage {
+  type: "vad";
+  event: "listening" | "speech_start" | "speech_end";
+}
+
 export type ServerMessage =
   | SessionStartedMessage
   | ResponseMessage
   | BeatMessage
   | StateMessage
   | ErrorMessage
-  | SessionEndedMessage;
+  | SessionEndedMessage
+  | VadMessage;
 
 // -- REST -----------------------------------------------------------------
 

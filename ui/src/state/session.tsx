@@ -48,6 +48,9 @@ export interface SessionStore {
   error: string | null;
   // Bumped each time the coach returns audio; SessionLive plays it then clears.
   lastAudio: { seq: number; b64: string } | null;
+  // Live S2S: true while the mic is actively listening (false once an utterance
+  // ends and we're transcribing/responding).
+  liveListening: boolean;
 }
 
 const INITIAL_COUNTING: CountingState = {
@@ -68,6 +71,7 @@ const initialStore: SessionStore = {
   counting: INITIAL_COUNTING,
   error: null,
   lastAudio: null,
+  liveListening: false,
 };
 
 type Action =
@@ -160,6 +164,10 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
         counting: INITIAL_COUNTING,
         messages: pushEntry(store.messages, { role: "system", text: "세션을 종료했어요." }),
       };
+
+    case "vad":
+      // Live S2S feedback: "speech_end" means we're transcribing/responding now.
+      return { ...store, liveListening: msg.event !== "speech_end" };
   }
 }
 
@@ -193,6 +201,9 @@ export interface SessionActions {
   switchMode: (mode: SessionMode, routineId?: number) => void;
   sendText: (text: string) => void;
   sendAudio: (audioB64: string, sampleRate: number) => void;
+  listenStart: () => void;
+  sendAudioChunk: (pcmB64: string, sampleRate: number) => void;
+  listenStop: () => void;
   interrupt: () => void;
   pause: () => void;
   resume: () => void;
@@ -255,6 +266,9 @@ export function SessionProvider({
         socket.sendText(text);
       },
       sendAudio: (audioB64, sampleRate) => socket.sendAudio(audioB64, sampleRate),
+      listenStart: () => socket.listenStart(),
+      sendAudioChunk: (pcmB64, sampleRate) => socket.sendAudioChunk(pcmB64, sampleRate),
+      listenStop: () => socket.listenStop(),
       interrupt: () => socket.interrupt(),
       pause: () => socket.pause(),
       resume: () => socket.resume(),

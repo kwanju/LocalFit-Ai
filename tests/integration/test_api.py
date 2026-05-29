@@ -9,6 +9,7 @@ import asyncio
 import base64
 from collections.abc import AsyncIterator
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -49,6 +50,29 @@ class MockSTT:
 
     async def health(self) -> bool:
         return True
+
+
+class _MockVADStream:
+    """Emits exactly one utterance on the first feed; silent afterwards."""
+
+    def __init__(self) -> None:
+        self._emitted = False
+
+    def feed(self, pcm: np.ndarray) -> list[np.ndarray]:
+        if self._emitted:
+            return []
+        self._emitted = True
+        return [np.zeros(8000, dtype=np.float32)]
+
+    def reset(self) -> None:
+        self._emitted = False
+
+
+class MockVAD:
+    """Stub VAD matching SileroVADWrapper.new_stream() surface used by ws_coach."""
+
+    def new_stream(self) -> _MockVADStream:
+        return _MockVADStream()
 
 
 @pytest.fixture
@@ -165,5 +189,29 @@ def test_ws_coach_s2c_audio_roundtrip(client: TestClient) -> None:
         assert response["response_text"] == _RESPONSE_TEXT
         assert response["audio_b64"] is None  # s2c = text output
 
+        ws.send_json({"type": "end"})
+        assert ws.receive_json()["type"] == "session_ended"
+
+
+def test_ws_coach_live_vad_roundtrip(client: TestClient) -> None:
+    # Live S2S streaming (s2c = voice in, text out → needs STT + VAD, not TTS).
+    app.state.stt = MockSTT()
+    app.state.vad = MockVAD()
+    pcm_b64 = base64.b64encode(np.zeros(2048, dtype=np.int16).tobytes()).decode("ascii")
+    with client.websocket_connect("/ws/coach") as ws:
+        ws.send_json({"type": "start", "mode": "s2c"})
+        assert ws.receive_json()["type"] == "session_started"
+
+        ws.send_json({"type": "listen_start"})
+        assert ws.receive_json() == {"type": "vad", "event": "listening"}
+
+        ws.send_json({"type": "audio_chunk", "pcm_b64": pcm_b64, "sample_rate": 16000})
+        assert ws.receive_json() == {"type": "vad", "event": "speech_end"}
+        response = ws.receive_json()
+        assert response["type"] == "response"
+        assert response["user_text"] == "스쿼트 폼 알려줘"  # from MockSTT via VAD utterance
+        assert response["audio_b64"] is None  # s2c = text output
+
+        ws.send_json({"type": "listen_stop"})
         ws.send_json({"type": "end"})
         assert ws.receive_json()["type"] == "session_ended"
