@@ -59,6 +59,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
 
+    # Warm the LLM into VRAM at startup so the first coaching message doesn't
+    # cold-load and blow the 4s timeout (best-effort; warmup swallows errors).
+    if app.state.llm is not None:
+        await app.state.llm.warmup()  # type: ignore[attr-defined]
+
     yield
     logger.info("LocalFit AI shutting down")
 

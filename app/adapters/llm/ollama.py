@@ -10,6 +10,11 @@ from app.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+# Cold-loading a 9B model into VRAM can take well over the coaching timeout,
+# so warmup uses its own generous budget instead of llm.timeout_sec.
+_WARMUP_TIMEOUT_SEC: float = 120.0
+_WARMUP_KEEP_ALIVE: str = "1h"
+
 
 class OllamaAdapter:
     def __init__(self, config: AppConfig) -> None:
@@ -66,6 +71,27 @@ class OllamaAdapter:
         except Exception as e:
             logger.error("LLM stream failed: %s", e)
             raise
+
+    async def warmup(self) -> None:
+        """Load the model into VRAM so the first real request isn't a cold start.
+
+        Best-effort and self-contained: uses a long timeout (cold load > coaching
+        timeout) and never raises — a failed warmup must not block startup.
+        """
+        try:
+            await asyncio.wait_for(
+                self._client.chat(
+                    model=self._model,
+                    messages=[{"role": "user", "content": "안녕"}],
+                    options={"num_predict": 1},
+                    keep_alive=_WARMUP_KEEP_ALIVE,
+                    think=False,
+                ),
+                timeout=_WARMUP_TIMEOUT_SEC,
+            )
+            logger.info("LLM model warmed up: %s", self._model)
+        except Exception as e:  # noqa: BLE001 — warmup is best-effort
+            logger.warning("LLM warmup failed: %s", e)
 
     async def health(self) -> bool:
         try:

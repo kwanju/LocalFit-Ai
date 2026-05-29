@@ -21,7 +21,7 @@ class RecorderProcessor extends AudioWorkletProcessor {
 registerProcessor('localfit-recorder', RecorderProcessor);
 `;
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);

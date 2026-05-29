@@ -1,0 +1,4 @@
+# pnpm 11+ settings home. Allow esbuild (Vite's bundler) to run its install
+# script; pnpm blocks build scripts by default.
+allowBuilds:
+  esbuild: true

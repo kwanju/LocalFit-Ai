@@ -10,7 +10,8 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { CountingDisplay } from "@/components/CountingDisplay";
 import { QuickButtons } from "@/components/QuickButtons";
 import { ModeSwitch } from "@/components/ModeSwitch";
-import type { ExerciseMode, SessionMode, SocketStatus } from "@/api/types";
+import type { ExerciseMode, SessionMode } from "@/api/types";
+import type { SocketStatus } from "@/api/ws";
 
 const VOICE_INPUT: ReadonlySet<SessionMode> = new Set<SessionMode>(["s2s", "s2c"]);
 const VOICE_OUTPUT: ReadonlySet<SessionMode> = new Set<SessionMode>(["s2s", "c2s"]);
@@ -35,12 +36,20 @@ const EXERCISES: readonly ExerciseOption[] = [
   { name: "플랭크", mode: "timer", target: 30 },
 ];
 
+type MicMode = "hold" | "toggle";
+
+const MIC_MODES: readonly { mode: MicMode; label: string }[] = [
+  { mode: "hold", label: "길게 누르기" },
+  { mode: "toggle", label: "탭 전환" },
+];
+
 export function SessionLive() {
   const { status, mode, started, serverState, messages, counting, lastAudio, actions } =
     useSession();
   const audio = useAudio();
   const wakeLock = useWakeLock();
   const [earphoneHint, setEarphoneHint] = useState(false);
+  const [micMode, setMicMode] = useState<MicMode>("hold");
 
   const isVoiceInput = VOICE_INPUT.has(mode);
   const isVoiceOutput = VOICE_OUTPUT.has(mode);
@@ -171,8 +180,10 @@ export function SessionLive() {
             disabled={disabled}
             recording={audio.recording}
             micError={audio.micError}
-            onPressStart={startMic}
-            onPressEnd={() => void stopMic()}
+            micMode={micMode}
+            onMicModeChange={setMicMode}
+            onStart={startMic}
+            onStop={() => void stopMic()}
           />
         )}
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -270,29 +281,63 @@ function MicControl({
   disabled,
   recording,
   micError,
-  onPressStart,
-  onPressEnd,
+  micMode,
+  onMicModeChange,
+  onStart,
+  onStop,
 }: {
   disabled: boolean;
   recording: boolean;
   micError: string | null;
-  onPressStart: () => void;
-  onPressEnd: () => void;
+  micMode: MicMode;
+  onMicModeChange: (mode: MicMode) => void;
+  onStart: () => void;
+  onStop: () => void;
 }) {
+  const buttonClass = `w-full rounded-xl px-5 py-6 text-lg font-bold text-white disabled:opacity-40 ${
+    recording ? "bg-rose-600" : "bg-sky-600"
+  }`;
+
   return (
     <div className="flex flex-col items-center gap-2 p-3">
-      <button
-        type="button"
-        disabled={disabled}
-        onPointerDown={onPressStart}
-        onPointerUp={onPressEnd}
-        onPointerLeave={() => recording && onPressEnd()}
-        className={`w-full rounded-xl px-5 py-6 text-lg font-bold text-white disabled:opacity-40 ${
-          recording ? "bg-rose-600" : "bg-sky-600"
-        }`}
-      >
-        {recording ? "녹음 중… (떼면 전송)" : "길게 눌러 말하기"}
-      </button>
+      <div className="flex gap-1 text-xs" role="group" aria-label="마이크 입력 방식">
+        {MIC_MODES.map((m) => (
+          <button
+            key={m.mode}
+            type="button"
+            onClick={() => onMicModeChange(m.mode)}
+            aria-pressed={micMode === m.mode}
+            className={`rounded-lg px-3 py-1.5 font-semibold ${
+              micMode === m.mode ? "bg-sky-600 text-white" : "bg-slate-800 text-slate-300"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {micMode === "hold" ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onPointerDown={onStart}
+          onPointerUp={onStop}
+          onPointerLeave={() => {
+            if (recording) onStop();
+          }}
+          className={buttonClass}
+        >
+          {recording ? "녹음 중… (떼면 전송)" : "길게 눌러 말하기"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => (recording ? onStop() : onStart())}
+          className={buttonClass}
+        >
+          {recording ? "탭하면 종료·전송" : "탭하여 말하기 시작"}
+        </button>
+      )}
       {micError && <p className="text-sm text-rose-400">{micError}</p>}
     </div>
   );
