@@ -17,6 +17,7 @@ from app.core.intent import IntentClassifier
 from app.core.orchestrator import SessionMode, SessionOrchestrator
 from app.core.safety import DangerLevel, SafetyGuard
 from app.core.state_machine import SessionState
+from app.messages import MSG_LLM_TIMEOUT
 
 # --- Mock adapters (ADR-010 Protocol compliant) --------------------------
 
@@ -345,3 +346,33 @@ async def test_no_persist_without_session_id(
     orch = build(SessionMode.c2c, intent, safety, persister=persister)  # no session_id
     await orch.start_session()
     assert persister.updates == []
+
+
+# --- LLM timeout fallback (PRD 7-1 #5) ------------------------------------
+
+
+async def test_llm_timeout_falls_back_and_counting_survives(
+    safety: SafetyGuard, llm: MockLLM
+) -> None:
+    """PRD 7-1 #5: when the coaching LLM exceeds the timeout, the user still gets
+    the fallback reply (MSG_LLM_TIMEOUT) and counting never stops ticking."""
+    beats: list[BeatEvent] = []
+
+    async def on_beat(event: BeatEvent) -> None:
+        beats.append(event)
+
+    # classify() returns instantly; only respond() is slowed, so it trips the timeout.
+    classifier = IntentClassifier(llm, timeout_sec=0.2)
+    llm.respond_delay = 1.0
+    orch = SessionOrchestrator(
+        intent=classifier, safety=safety, mode=SessionMode.c2c, on_beat=on_beat
+    )
+    await orch.start_session()
+    await orch.start_counting(ExerciseMode.metronome, interval_sec=0.05, max_reps=200)
+
+    beats_before = len(beats)
+    result = await orch.handle_text_input("다음 세트는 어떻게 할까요?")
+    assert result.response_text == MSG_LLM_TIMEOUT  # fallback fired, not a hang
+    assert len(beats) > beats_before  # counting kept ticking through the slow LLM
+
+    await orch.stop_counting()

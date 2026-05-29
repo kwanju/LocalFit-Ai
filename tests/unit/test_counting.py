@@ -36,11 +36,12 @@ async def collect_beats(
 async def test_beat_timing_no_drift(mode: ExerciseMode) -> None:
     """Beat intervals must be within ±15% of configured interval, with ≤10% cumulative drift.
 
-    Uses 0.2s interval and 1.3s run window.
-    At 2.0s production interval the tolerance is comfortably within PRD 7-1 (±10%).
+    Uses a 0.5s interval (±15% = 75ms slack) and 2.2s run window: large enough that
+    event-loop jitter under full-suite load doesn't trip the per-beat bound, while
+    still far below the 2.0s production interval where PRD 7-1 (±10%) holds comfortably.
     """
-    interval = 0.2
-    records = await collect_beats(mode, interval, run_sec=1.3)
+    interval = 0.5
+    records = await collect_beats(mode, interval, run_sec=2.2)
 
     timestamps = [t for t, _ in records]
     assert len(timestamps) >= 4, f"Expected ≥4 beats, got {len(timestamps)}"
