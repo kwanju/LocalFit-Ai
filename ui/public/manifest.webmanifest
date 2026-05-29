@@ -1,0 +1,20 @@
+{
+  "name": "LocalFit AI",
+  "short_name": "LocalFit",
+  "description": "로컬 LLM 기반 개인 AI 피트니스 코치",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

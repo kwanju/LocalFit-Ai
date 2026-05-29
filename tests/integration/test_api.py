@@ -6,6 +6,7 @@ round-trip (the phase completion criterion).
 """
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 
 import pytest
@@ -15,6 +16,7 @@ from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.adapters.llm.protocol import LLMRequest
+from app.adapters.stt.protocol import STTResult
 from app.db.engine import get_session, init_db
 from app.main import app
 
@@ -34,6 +36,16 @@ class MockLLM:
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
         yield await self.generate(request)
+
+    async def health(self) -> bool:
+        return True
+
+
+class MockSTT:
+    """ADR-010 Protocol-compliant stub: returns a fixed transcript for any audio."""
+
+    async def transcribe(self, audio_bytes: bytes, sample_rate: int = 16000) -> STTResult:
+        return STTResult(text="스쿼트 폼 알려줘", language="ko", duration_ms=10)
 
     async def health(self) -> bool:
         return True
@@ -133,3 +145,25 @@ def test_ws_coach_c2c_roundtrip(client: TestClient) -> None:
         ws.send_json({"type": "end"})
         ended = ws.receive_json()
         assert ended["type"] == "session_ended"
+
+
+def test_ws_coach_s2c_audio_roundtrip(client: TestClient) -> None:
+    # Voice input (s2c) needs an STT adapter; set it just for this test so the
+    # /health adapter assertions elsewhere stay untouched.
+    app.state.stt = MockSTT()
+    audio_b64 = base64.b64encode(b"RIFFfake-wav-bytes").decode("ascii")
+    with client.websocket_connect("/ws/coach") as ws:
+        ws.send_json({"type": "start", "mode": "s2c"})
+        started = ws.receive_json()
+        assert started["type"] == "session_started"
+        assert started["mode"] == "s2c"
+
+        ws.send_json({"type": "audio", "audio_b64": audio_b64, "sample_rate": 16000})
+        response = ws.receive_json()
+        assert response["type"] == "response"
+        assert response["user_text"] == "스쿼트 폼 알려줘"  # from MockSTT
+        assert response["response_text"] == _RESPONSE_TEXT
+        assert response["audio_b64"] is None  # s2c = text output
+
+        ws.send_json({"type": "end"})
+        assert ws.receive_json()["type"] == "session_ended"

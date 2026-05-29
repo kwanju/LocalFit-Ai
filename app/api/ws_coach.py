@@ -1,7 +1,7 @@
 """WebSocket /ws/coach — real-time bidirectional coaching.
 
-JSON protocol (client → server): {"type": "start"|"text"|"interrupt"|"pause"|
-"resume"|"start_counting"|"stop_counting"|"end", ...}. Server → client:
+JSON protocol (client → server): {"type": "start"|"text"|"audio"|"interrupt"|
+"pause"|"resume"|"start_counting"|"stop_counting"|"end", ...}. Server → client:
 "session_started" | "response" | "beat" | "state" | "error" | "session_ended".
 
 The endpoint stays thin: it owns the socket and translates messages into
@@ -76,6 +76,7 @@ class _CoachConnection:
         handlers = {
             "start": self._handle_start,
             "text": self._handle_text,
+            "audio": self._handle_audio,
             "interrupt": self._handle_interrupt,
             "pause": self._handle_pause,
             "resume": self._handle_resume,
@@ -160,6 +161,38 @@ class _CoachConnection:
         except Exception as e:  # noqa: BLE001 — surface failures to the client, keep socket alive
             logger.error("Coaching reply failed: %s", e)
             await self._send_error("코치 응답 중 오류가 발생했습니다.")
+
+    async def _handle_audio(self, message: dict) -> None:
+        """Voice input (s2s/s2c): base64 16kHz WAV → STT → coaching, like _handle_text."""
+        if self._orch is None:
+            await self._send_error("세션이 시작되지 않았습니다.")
+            return
+        audio_b64 = message.get("audio_b64")
+        if not audio_b64:
+            await self._send_error("빈 오디오는 보낼 수 없습니다.")
+            return
+        try:
+            audio_bytes = base64.b64decode(audio_b64)
+        except ValueError:  # binascii.Error subclasses ValueError
+            await self._send_error("오디오를 디코딩할 수 없습니다.")
+            return
+        sample_rate = message.get("sample_rate", 16000)
+        task = asyncio.create_task(self._reply_voice(audio_bytes, sample_rate))
+        self._handle_tasks.add(task)
+        task.add_done_callback(self._handle_tasks.discard)
+
+    async def _reply_voice(self, audio_bytes: bytes, sample_rate: int) -> None:
+        try:
+            async with self._op_lock:
+                result = await self._orch.handle_voice_input(  # type: ignore[union-attr]
+                    audio_bytes, sample_rate
+                )
+            await self._send(self._serialize_result(result))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — surface failures to the client, keep socket alive
+            logger.error("Voice coaching reply failed: %s", e)
+            await self._send_error("음성 인식 중 오류가 발생했습니다.")
 
     async def _handle_interrupt(self, _message: dict) -> None:
         if self._orch is not None:
