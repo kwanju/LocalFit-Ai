@@ -236,10 +236,11 @@ class _CoachConnection:
             return
         try:
             raw = base64.b64decode(pcm_b64)
-        except ValueError:
+            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / _INT16_SCALE
+            utterances = await asyncio.to_thread(self._vad_session.feed, pcm)  # type: ignore[attr-defined]
+        except Exception as e:  # noqa: BLE001 — a bad chunk must not kill the live socket
+            logger.warning("Live audio chunk dropped: %s", e)
             return
-        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / _INT16_SCALE
-        utterances = await asyncio.to_thread(self._vad_session.feed, pcm)  # type: ignore[attr-defined]
         for utterance in utterances:
             # One utterance per turn: take the first, drop the rest, go half-duplex.
             self._reply_active = True

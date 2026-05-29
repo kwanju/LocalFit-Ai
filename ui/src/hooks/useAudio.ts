@@ -116,7 +116,7 @@ interface UseAudio {
   stopPlayback: () => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<RecordedAudio | null>;
-  startStreaming: (onChunk: (pcmB64: string, sampleRate: number) => void) => Promise<void>;
+  startStreaming: (onChunk: (pcmB64: string, sampleRate: number) => void) => Promise<boolean>;
   stopStreaming: () => Promise<void>;
 }
 
@@ -240,7 +240,8 @@ export function useAudio(): UseAudio {
 
   // Continuous capture for hands-free live S2S: emits ~128ms 16kHz PCM16 chunks.
   const startStreaming = useCallback(
-    async (onChunk: (pcmB64: string, sampleRate: number) => void) => {
+    async (onChunk: (pcmB64: string, sampleRate: number) => void): Promise<boolean> => {
+      if (streamRef.current) return false; // already capturing (recording or streaming)
       setMicError(null);
       onChunkRef.current = onChunk;
       streamFramesRef.current = [];
@@ -278,10 +279,12 @@ export function useAudio(): UseAudio {
         sink.gain.value = 0;
         node.connect(sink).connect(ctx.destination);
         setStreaming(true);
+        return true;
       } catch (err) {
         console.warn("Microphone streaming failed", err);
         setMicError("마이크를 사용할 수 없습니다. 권한을 확인해 주세요.");
         setStreaming(false);
+        return false;
       }
     },
     [],

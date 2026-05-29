@@ -119,18 +119,22 @@ export function SessionLive() {
 
   // Live hands-free: stream chunks continuously; gate on playback so the coach's
   // own voice isn't captured and re-transcribed (half-duplex).
-  const startLive = () => {
+  const startLive = async () => {
     if (!started) return;
-    actions.listenStart();
-    void audio.startStreaming((pcmB64, sampleRate) => {
+    // Acquire the mic first; only tell the server to listen if capture started.
+    const ok = await audio.startStreaming((pcmB64, sampleRate) => {
       if (!playingRef.current) actions.sendAudioChunk(pcmB64, sampleRate);
     });
+    if (ok) actions.listenStart();
   };
   const stopLive = () => {
     void audio.stopStreaming();
     actions.listenStop();
   };
-  const toggleLive = () => (audio.streaming ? stopLive() : startLive());
+  const toggleLive = () => {
+    if (audio.streaming) stopLive();
+    else void startLive();
+  };
 
   // Stop live streaming if the user leaves live mode, switches to a non-voice
   // input mode, ends the session, or unmounts.
