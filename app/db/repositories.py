@@ -1,7 +1,7 @@
 import json
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from loguru import logger
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,8 +19,6 @@ from app.db.models import (
     UserProfile,
     WorkoutSession,
 )
-
-logger = logging.getLogger(__name__)
 
 # Terminal DB statuses that also stamp ended_at when first reached.
 _ENDED_STATUSES: frozenset[SessionStatus] = frozenset(
@@ -46,7 +44,7 @@ class SessionRepository:
         ws = await self.get_by_id(session_id)
         if ws is None:
             return None
-        ws.ended_at = datetime.now(timezone.utc)
+        ws.ended_at = datetime.now(UTC)
         ws.status = status
         self._session.add(ws)
         await self._session.commit()
@@ -62,7 +60,7 @@ class SessionRepository:
         db_status = SessionStatus(status)
         ws.status = db_status
         if db_status in _ENDED_STATUSES and ws.ended_at is None:
-            ws.ended_at = datetime.now(timezone.utc)
+            ws.ended_at = datetime.now(UTC)
         self._session.add(ws)
         await self._session.commit()
 

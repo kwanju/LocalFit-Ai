@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.adapters.llm.protocol import LLMRequest
-from app.adapters.stt.protocol import STTResult
+from app.adapters.llm.ollama_client import LLMRequest
+from app.adapters.stt.faster_whisper_client import STTResult
 from app.db.engine import get_session, init_db
 from app.main import app
 
@@ -152,6 +152,7 @@ def test_onboarding_generates_first_routine(client: TestClient) -> None:
     assert status.json()["profile"]["goal"] == "근력 향상"
 
 
+@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
 def test_ws_coach_c2c_roundtrip(client: TestClient) -> None:
     with client.websocket_connect("/ws/coach") as ws:
         ws.send_json({"type": "start", "mode": "c2c"})
@@ -171,6 +172,7 @@ def test_ws_coach_c2c_roundtrip(client: TestClient) -> None:
         assert ended["type"] == "session_ended"
 
 
+@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
 def test_ws_coach_s2c_audio_roundtrip(client: TestClient) -> None:
     # Voice input (s2c) needs an STT adapter; set it just for this test so the
     # /health adapter assertions elsewhere stay untouched.
@@ -193,6 +195,7 @@ def test_ws_coach_s2c_audio_roundtrip(client: TestClient) -> None:
         assert ws.receive_json()["type"] == "session_ended"
 
 
+@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
 def test_ws_coach_live_vad_roundtrip(client: TestClient) -> None:
     # Live S2S streaming (s2c = voice in, text out → needs STT + VAD, not TTS).
     app.state.stt = MockSTT()

@@ -1,14 +1,13 @@
-import logging
 import re
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
+
+from loguru import logger
 
 from app.prompts.safety import SAFETY_RESPONSES
 
-logger = logging.getLogger(__name__)
 
-
-class DangerLevel(str, Enum):
+class DangerLevel(StrEnum):
     LOW = "low"
     MODERATE = "moderate"
     HIGH = "high"

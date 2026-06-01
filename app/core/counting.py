@@ -1,17 +1,16 @@
 import asyncio
 import contextlib
-import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
+
+from loguru import logger
 
 from app.utils.timer import beat_scheduler
 
-logger = logging.getLogger(__name__)
 
-
-class ExerciseMode(str, Enum):
+class ExerciseMode(StrEnum):
     metronome = "metronome"  # pullup, pushup, squat — alternating up/down phases
     timer = "timer"          # plank — elapsed-time ticks
 

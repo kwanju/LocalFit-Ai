@@ -1,5 +1,9 @@
 """WebSocket /ws/coach — real-time bidirectional coaching.
 
+# DEPRECATED — Phase 2에서 app/api/ws_voice.py (Pipecat FastAPIWebsocketTransport)로 대체.
+# 코드는 참조용으로 유지. main.py 라우터에서 분리됨 (ADR-009/011).
+
+
 JSON protocol (client → server): {"type": "start"|"text"|"audio"|"listen_start"|
 "audio_chunk"|"listen_stop"|"interrupt"|"pause"|"resume"|"start_counting"|
 "stop_counting"|"end", ...}. Server → client: "session_started" | "response" |
@@ -17,10 +21,10 @@ ignored while a reply is in flight (the coach is "speaking").
 
 import asyncio
 import base64
-import logging
 
 import numpy as np
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import AppConfig
@@ -31,8 +35,6 @@ from app.core.safety import SafetyGuard
 from app.core.state_machine import is_terminal
 from app.db.engine import get_session
 from app.db.repositories import SessionRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
 

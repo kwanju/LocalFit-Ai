@@ -1,14 +1,12 @@
 import asyncio
-import logging
 from dataclasses import dataclass
 
 import numpy as np
 import torch
+from loguru import logger
 from silero_vad import VADIterator, get_speech_timestamps, load_silero_vad
 
 from app.config import AppConfig
-
-logger = logging.getLogger(__name__)
 
 _SILERO_SAMPLE_RATE = 16000
 # silero-vad streaming requires fixed 512-sample windows at 16kHz (~32ms).

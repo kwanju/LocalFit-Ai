@@ -1,17 +1,18 @@
 import asyncio
 import json
-import logging
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
-from app.adapters.llm.protocol import LLMAdapter, LLMMessage, LLMRequest
+from loguru import logger
+
+# NOTE: importing from adapters violates ADR-012 (core should not import adapters).
+# IntentClassifier will be rewritten as a pure domain function in Phase 5 (ADR-013 instructor).
+from app.adapters.llm.ollama_client import LLMMessage, LLMRequest
 from app.messages import MSG_COACHING_UNAVAILABLE, MSG_LLM_TIMEOUT
 from app.prompts.coaching import (
     INTENT_CLASSIFY_PROMPT_PREFIX,
     INTENT_RESPONSE_PROMPT_PREFIXES,
     SAFETY_SYSTEM_PREFIX,
 )
-
-logger = logging.getLogger(__name__)
 
 IntentType = Literal["body_state", "schedule", "feedback", "goal", "injury", "general"]
 
@@ -25,7 +26,7 @@ _RESPOND_MAX_TOKENS: int = 256
 
 
 class IntentClassifier:
-    def __init__(self, llm: LLMAdapter, timeout_sec: float = _DEFAULT_TIMEOUT_SEC) -> None:
+    def __init__(self, llm: Any, timeout_sec: float = _DEFAULT_TIMEOUT_SEC) -> None:
         self._llm = llm
         self._timeout_sec = timeout_sec
 
@@ -42,11 +43,11 @@ class IntentClassifier:
         try:
             raw = await asyncio.wait_for(self._llm.generate(request), timeout=self._timeout_sec)
             return self._parse_intent(raw)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Intent classification timed out — falling back to 'general'")
             return "general"
         except Exception as e:
-            logger.warning("Intent classification failed: %s — falling back to 'general'", e)
+            logger.warning("Intent classification failed: {} — falling back to 'general'", e)
             return "general"
 
     async def respond(self, intent: IntentType, user_input: str) -> str:
@@ -64,11 +65,11 @@ class IntentClassifier:
         )
         try:
             return await asyncio.wait_for(self._llm.generate(request), timeout=self._timeout_sec)
-        except asyncio.TimeoutError:
-            logger.warning("LLM respond timeout for intent=%s", intent)
+        except TimeoutError:
+            logger.warning("LLM respond timeout for intent={}", intent)
             return MSG_LLM_TIMEOUT
         except Exception as e:
-            logger.error("LLM respond failed for intent=%s: %s", intent, e)
+            logger.error("LLM respond failed for intent={}: {}", intent, e)
             return MSG_COACHING_UNAVAILABLE
 
     def _parse_intent(self, raw: str) -> IntentType:
@@ -81,8 +82,8 @@ class IntentClassifier:
             intent = str(data.get("intent", "")).lower().strip()
             if intent in _VALID_INTENTS:
                 return intent  # type: ignore[return-value]
-            logger.warning("Unknown intent '%s' — falling back to 'general'", intent)
+            logger.warning("Unknown intent '{}' — falling back to 'general'", intent)
             return "general"
         except (json.JSONDecodeError, ValueError) as e:
-            logger.warning("Intent parse error: %s — falling back to 'general'", e)
+            logger.warning("Intent parse error: {} — falling back to 'general'", e)
             return "general"

@@ -1,18 +1,14 @@
-import logging
 from pathlib import Path
 
-import yaml
+from loguru import logger
 from pydantic import BaseModel
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_USER_ID: int = 1
 
 
 class LLMConfig(BaseModel):
     host: str
-    active: str
-    models: dict[str, str]
+    model: str          # 단일 모델 (ADR-004: qwen3:8b)
     timeout_sec: float
     keep_alive: str
 
@@ -45,6 +41,15 @@ class CountingConfig(BaseModel):
     max_reps: int
 
 
+class InstructorConfig(BaseModel):
+    max_retries: int = 2
+
+
+class CoachConfig(BaseModel):
+    proactive_opener: bool = True
+    instructor: InstructorConfig = InstructorConfig()
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig
     stt: STTConfig
@@ -52,16 +57,19 @@ class AppConfig(BaseModel):
     vad: VADConfig
     db: DBConfig
     counting: CountingConfig
+    coach: CoachConfig = CoachConfig()
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
+    import yaml
+
     try:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return AppConfig(**data)
     except FileNotFoundError:
-        logger.error("Config file not found: %s — copy config.example.yaml to config.yaml", path)
+        logger.error("Config file not found: {} — copy config.example.yaml to config.yaml", path)
         raise
     except Exception as e:
-        logger.error("Failed to load config from %s: %s", path, e)
+        logger.error("Failed to load config from {}: {}", path, e)
         raise

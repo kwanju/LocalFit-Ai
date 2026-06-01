@@ -6,14 +6,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db.engine import init_db
 from app.db.models import (
-    ConditionLog,
     CountingMode,
     Exercise,
-    InteractionLog,
     SessionMode,
     SessionStatus,
-    SetLog,
-    WorkoutSession,
 )
 from app.db.repositories import (
     ConditionRepository,

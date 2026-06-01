@@ -1,16 +1,14 @@
 from typing import TYPE_CHECKING, Any
 
-from app.adapters.stt.protocol import STTAdapter, STTResult
+from app.adapters.stt.faster_whisper_client import FasterWhisperClient, STTResult
 from app.config import AppConfig
 
 if TYPE_CHECKING:
     from app.adapters.stt.vad import SileroVADWrapper
 
 
-def get_stt_adapter(config: AppConfig) -> STTAdapter:
-    from app.adapters.stt.whisper import FasterWhisperAdapter
-
-    return FasterWhisperAdapter(config)
+def get_stt_adapter(config: AppConfig) -> FasterWhisperClient:
+    return FasterWhisperClient(config)
 
 
 def get_vad_adapter(config: AppConfig) -> "SileroVADWrapper":
@@ -20,11 +18,8 @@ def get_vad_adapter(config: AppConfig) -> "SileroVADWrapper":
 
 
 def __getattr__(name: str) -> Any:
-    # Lazy access so importing the protocol does not pull in numpy/torch.
-    if name == "FasterWhisperAdapter":
-        from app.adapters.stt.whisper import FasterWhisperAdapter
-
-        return FasterWhisperAdapter
+    if name == "FasterWhisperClient":
+        return FasterWhisperClient
     if name in ("SileroVADWrapper", "VADSegment"):
         from app.adapters.stt.vad import SileroVADWrapper, VADSegment
 
@@ -35,9 +30,8 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "get_stt_adapter",
     "get_vad_adapter",
-    "STTAdapter",
     "STTResult",
-    "FasterWhisperAdapter",
+    "FasterWhisperClient",
     "SileroVADWrapper",
     "VADSegment",
 ]

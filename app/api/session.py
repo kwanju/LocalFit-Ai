@@ -1,6 +1,5 @@
 """Session REST endpoints. Live coaching runs over /ws/coach; these manage records."""
 
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -9,8 +8,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db.engine import get_session
 from app.db.models import SessionMode, SessionStatus, WorkoutSession
 from app.db.repositories import SessionRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["session"])
 

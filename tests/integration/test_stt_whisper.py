@@ -34,8 +34,8 @@ def config():
 @pytest.fixture
 def adapter(config):
     try:
-        from app.adapters.stt.whisper import FasterWhisperAdapter
-        return FasterWhisperAdapter(config)
+        from app.adapters.stt.faster_whisper_client import FasterWhisperClient
+        return FasterWhisperClient(config)
     except Exception as e:
         pytest.skip(f"FasterWhisper model unavailable: {e}")
 
@@ -45,7 +45,7 @@ async def test_health(adapter):
 
 
 async def test_transcribe_returns_result_structure(adapter):
-    from app.adapters.stt.protocol import STTResult
+    from app.adapters.stt.faster_whisper_client import STTResult
 
     result = await adapter.transcribe(_make_silent_wav(500))
     assert isinstance(result, STTResult)

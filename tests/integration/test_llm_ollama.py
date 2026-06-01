@@ -1,7 +1,6 @@
 import pytest
 
-from app.adapters.llm.ollama import OllamaAdapter
-from app.adapters.llm.protocol import LLMMessage, LLMRequest
+from app.adapters.llm.ollama_client import LLMMessage, LLMRequest, OllamaClient
 from app.config import load_config
 
 pytestmark = pytest.mark.ollama
@@ -17,7 +16,7 @@ def config():
 
 @pytest.fixture
 def adapter(config):
-    return OllamaAdapter(config)
+    return OllamaClient(config)
 
 
 @pytest.fixture(autouse=True)

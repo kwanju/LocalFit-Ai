@@ -23,8 +23,8 @@ def adapter(config):
     if not Path(config.tts.qwen3.get("ref_audio_path", "")).exists():
         pytest.skip("data/ref_voice.wav not found — place a Korean reference WAV (3s+)")
     try:
-        from app.adapters.tts.qwen3 import Qwen3TTSAdapter
-        return Qwen3TTSAdapter(config)
+        from app.adapters.tts.qwen3_client import Qwen3TTSClient
+        return Qwen3TTSClient(config)
     except Exception as e:
         pytest.skip(f"Qwen3-TTS unavailable: {e}")
 
@@ -34,7 +34,7 @@ async def test_health(adapter):
 
 
 async def test_synthesize_returns_wav_bytes(adapter):
-    from app.adapters.tts.protocol import TTSRequest
+    from app.adapters.tts.qwen3_client import TTSRequest
 
     request = TTSRequest(text="안녕하세요.")
     wav_bytes = await adapter.synthesize(request)
@@ -49,7 +49,7 @@ async def test_synthesize_returns_wav_bytes(adapter):
 
 
 async def test_synthesize_korean_coaching_phrase(adapter):
-    from app.adapters.tts.protocol import TTSRequest
+    from app.adapters.tts.qwen3_client import TTSRequest
 
     request = TTSRequest(text="자, 이제 스쿼트 10회 시작합니다. 준비되셨나요?")
     wav_bytes = await adapter.synthesize(request)
@@ -58,7 +58,7 @@ async def test_synthesize_korean_coaching_phrase(adapter):
 
 
 async def test_stream_yields_bytes(adapter):
-    from app.adapters.tts.protocol import TTSRequest
+    from app.adapters.tts.qwen3_client import TTSRequest
 
     request = TTSRequest(text="파이팅!")
     chunks = []

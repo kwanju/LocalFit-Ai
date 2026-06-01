@@ -1,22 +1,17 @@
 from typing import Any
 
-from app.adapters.llm.protocol import LLMAdapter, LLMMessage, LLMRequest
+from app.adapters.llm.ollama_client import LLMMessage, LLMRequest, OllamaClient
 from app.config import AppConfig
 
 
-def get_llm_adapter(config: AppConfig) -> LLMAdapter:
-    from app.adapters.llm.ollama import OllamaAdapter
-
-    return OllamaAdapter(config)
+def get_llm_adapter(config: AppConfig) -> OllamaClient:
+    return OllamaClient(config)
 
 
 def __getattr__(name: str) -> Any:
-    # Lazy access so importing the protocol does not pull in the ollama dependency.
-    if name == "OllamaAdapter":
-        from app.adapters.llm.ollama import OllamaAdapter
-
-        return OllamaAdapter
+    if name == "OllamaClient":
+        return OllamaClient
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["get_llm_adapter", "LLMAdapter", "LLMMessage", "LLMRequest"]
+__all__ = ["get_llm_adapter", "OllamaClient", "LLMMessage", "LLMRequest"]

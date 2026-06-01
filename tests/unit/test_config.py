@@ -10,8 +10,7 @@ def test_load_config_success(tmp_path):
         yaml.dump({
             "llm": {
                 "host": "http://127.0.0.1:11434",
-                "active": "qwen3.5",
-                "models": {"qwen3.5": "qwen3.5:9b"},
+                "model": "qwen3:8b",
                 "timeout_sec": 4.0,
                 "keep_alive": "10m",
             },
@@ -22,8 +21,7 @@ def test_load_config_success(tmp_path):
                 "language": "ko",
             },
             "tts": {
-                "active": "kokoro",
-                "kokoro": {"voice": "af_heart", "speed": "1.0"},
+                "active": "qwen3",
                 "qwen3": {"voice": "default", "speed": "1.0"},
             },
             "vad": {
@@ -40,10 +38,9 @@ def test_load_config_success(tmp_path):
     config = load_config(cfg_file)
 
     assert isinstance(config, AppConfig)
-    assert config.llm.active == "qwen3.5"
-    assert config.llm.models["qwen3.5"] == "qwen3.5:9b"
+    assert config.llm.model == "qwen3:8b"
     assert config.stt.language == "ko"
-    assert config.tts.active == "kokoro"
+    assert config.tts.active == "qwen3"
     assert config.counting.beat_interval_sec == 2.0
 
 

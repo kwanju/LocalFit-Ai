@@ -5,7 +5,7 @@ import pytest
 
 np = pytest.importorskip("numpy", reason="numpy not installed — run: uv pip install -e '.[stt]'")
 
-from app.adapters.stt.whisper import _decode_audio  # noqa: E402
+from app.adapters.stt.faster_whisper_client import _decode_audio  # noqa: E402
 
 
 def _make_wav(

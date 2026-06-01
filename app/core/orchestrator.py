@@ -1,35 +1,31 @@
 """Session orchestrator — wires adapters + core modules into the 4-mode pipeline.
 
-Pure Python (no FastAPI / SQLModel / Ollama imports). Adapters and the DB
-persister are injected (CLAUDE.md §4, phase-4a constraints). DB persistence is
-reached through the ``SessionPersister`` Protocol so ``core`` never imports
-``app.db``.
+# DEPRECATED — Phase 2에서 pipecat_services/ws_voice.py + Pipecat 파이프라인으로 대체.
+# 이 파일은 Phase 2 진입 전까지 참조용으로 유지. audio·VAD·sentence 처리는 Phase 2에서 제거.
+# ADR-012 위반 (core가 adapters import): orchestrator 자체가 Phase 2에서 폐기됨.
 """
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Protocol
+from enum import StrEnum
+from typing import Any, Protocol
 
-from app.adapters.stt.protocol import STTAdapter, STTResult
-from app.adapters.tts.protocol import TTSAdapter, TTSRequest
+from loguru import logger
+
+from app.adapters.stt.faster_whisper_client import STTResult
+from app.adapters.tts.qwen3_client import TTSRequest
 from app.core.counting import BeatEvent, CountingEngine, ExerciseMode
 from app.core.intent import IntentClassifier, IntentType
 from app.core.safety import DangerLevel, SafetyGuard, SafetyResult
 from app.core.state_machine import SessionState, transition
 
-logger = logging.getLogger(__name__)
-
-# Safety levels at or above MODERATE halt the session (counting stops).
-# LOW is a gentle nudge: surface the message but keep exercising.
 _HALT_LEVELS: frozenset[DangerLevel] = frozenset(
     {DangerLevel.MODERATE, DangerLevel.HIGH, DangerLevel.EMERGENCY}
 )
 
 
-class SessionMode(str, Enum):
+class SessionMode(StrEnum):
     """Input→output channel combination. Duplicated from app.db.models to keep core pure."""
 
     s2s = "s2s"  # voice in  → voice out
@@ -41,7 +37,6 @@ class SessionMode(str, Enum):
 _VOICE_INPUT_MODES: frozenset[SessionMode] = frozenset({SessionMode.s2s, SessionMode.s2c})
 _VOICE_OUTPUT_MODES: frozenset[SessionMode] = frozenset({SessionMode.s2s, SessionMode.c2s})
 
-# SessionState → DB SessionStatus value (DB enum: in_progress | completed | cancelled).
 _STATE_TO_DB_STATUS: dict[SessionState, str] = {
     SessionState.COMPLETED: "completed",
     SessionState.ABORTED: "cancelled",
@@ -80,8 +75,8 @@ class SessionOrchestrator:
         intent: IntentClassifier,
         safety: SafetyGuard,
         mode: SessionMode,
-        stt: STTAdapter | None = None,
-        tts: TTSAdapter | None = None,
+        stt: Any | None = None,
+        tts: Any | None = None,
         persister: SessionPersister | None = None,
         on_beat: Callable[[BeatEvent], Awaitable[None]] | None = None,
         session_id: int | None = None,
@@ -112,18 +107,12 @@ class SessionOrchestrator:
     def mode(self) -> SessionMode:
         return self._mode
 
-    # -- lifecycle --------------------------------------------------------
-
     async def start_session(self, session_id: int | None = None) -> None:
         if session_id is not None:
             self._session_id = session_id
         await self._to_state(SessionState.EXERCISING)
 
     async def advance_to(self, target: SessionState) -> None:
-        """Drive a legal lifecycle transition (WARMUP/REST/COOLDOWN/COMPLETED).
-
-        Raises InvalidTransitionError if the move is not allowed from the current state.
-        """
         if target in (SessionState.COMPLETED, SessionState.ABORTED):
             await self.stop_counting()
         await self._to_state(target)
@@ -142,8 +131,6 @@ class SessionOrchestrator:
         await self.stop_counting()
         await self._to_state(SessionState.ABORTED)
 
-    # -- input handling (4-mode chain) ------------------------------------
-
     async def handle_voice_input(
         self, audio_bytes: bytes, sample_rate: int = 16000
     ) -> InteractionResult:
@@ -157,14 +144,13 @@ class SessionOrchestrator:
 
     async def _handle_text(self, text: str) -> InteractionResult:
         self._interrupted = False
-        # INJURY_ALERT interceptor — runs before any LLM call, on every input.
         safety = self._safety.check(text)
         if safety.is_unsafe:
             return await self._handle_safety(text, safety)
 
         intent = await self._intent.classify(text)
         response_text = await self._run_llm(intent, text)
-        if response_text is None:  # interrupted
+        if response_text is None:
             return InteractionResult(
                 user_text=text, response_text="", state=self._state, intent=intent
             )
@@ -177,15 +163,11 @@ class SessionOrchestrator:
             response_audio=audio,
         )
 
-    # -- interrupt --------------------------------------------------------
-
     async def interrupt(self) -> None:
         """Cancel in-flight LLM/TTS work. Counting is intentionally left running."""
         self._interrupted = True
         await self._cancel_active()
         logger.info("Session interrupted: LLM/TTS cancelled, counting preserved")
-
-    # -- counting (runs concurrently with coaching) -----------------------
 
     async def start_counting(
         self,
@@ -214,8 +196,6 @@ class SessionOrchestrator:
     @property
     def current_rep(self) -> int:
         return self._counting.current_rep if self._counting else 0
-
-    # -- internals --------------------------------------------------------
 
     async def _run_llm(self, intent: IntentType, text: str) -> str | None:
         task = asyncio.create_task(self._intent.respond(intent, text))
@@ -246,8 +226,6 @@ class SessionOrchestrator:
     async def _handle_safety(self, text: str, safety: SafetyResult) -> InteractionResult:
         level = safety.level
         if level in _HALT_LEVELS:
-            # Only a halt-level event pre-empts in-flight coaching and counting.
-            # LOW is a gentle nudge — let the current turn finish.
             await self._cancel_active()
             await self.stop_counting()
             target = (
@@ -258,7 +236,7 @@ class SessionOrchestrator:
             await self._to_state(target)
         response = safety.response or ""
         audio = await self._run_tts(response)
-        logger.info("Safety interceptor fired: level=%s state=%s", level, self._state.value)
+        logger.info("Safety interceptor fired: level={} state={}", level, self._state.value)
         return InteractionResult(
             user_text=text,
             response_text=response,
@@ -285,4 +263,4 @@ class SessionOrchestrator:
         try:
             await self._persister.update_status(self._session_id, status)
         except Exception as e:  # noqa: BLE001 — persistence failure must not crash session
-            logger.error("Failed to persist session status: %s", e)
+            logger.error("Failed to persist session status: {}", e)

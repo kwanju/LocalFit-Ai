@@ -1,11 +1,9 @@
 """GET /health — backend + per-adapter status aggregation (ADR-014)."""
 
 import asyncio
-import logging
 
 from fastapi import APIRouter, Request
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 router = APIRouter(tags=["health"])
 

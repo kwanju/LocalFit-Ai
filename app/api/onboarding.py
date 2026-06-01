@@ -4,9 +4,8 @@ Single-user (ADR-002): profile is always DEFAULT_USER_ID. Routine generation
 logic lives in app.core.onboarding; this layer only persists (api 얇게).
 """
 
-import logging
-
 from fastapi import APIRouter, Depends
+from loguru import logger
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -21,8 +20,6 @@ from app.core.onboarding import (
 from app.db.engine import get_session
 from app.db.models import FitnessLevel, Routine, RoutineExercise, UserProfile
 from app.db.repositories import ExerciseRepository, RoutineRepository, UserProfileRepository
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 

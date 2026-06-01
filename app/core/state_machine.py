@@ -4,13 +4,12 @@ Pure Python — no FastAPI / SQLModel / Ollama imports (per CLAUDE.md §4).
 The orchestrator drives transitions; this module only defines the legal set.
 """
 
-import logging
-from enum import Enum
+from enum import StrEnum
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     IDLE = "idle"
     CONDITION_CHECK = "condition_check"
     WARMUP = "warmup"

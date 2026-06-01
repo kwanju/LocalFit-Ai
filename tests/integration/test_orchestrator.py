@@ -1,7 +1,7 @@
 """Integration tests for SessionOrchestrator using mock adapters (phase-4a).
 
-Covers: 4-mode routing (S2S/C2S/C2C/S2C), injury interceptor (any state),
-interrupt (LLM/TTS cancelled, counting preserved), and DB status persistence.
+# DEPRECATED — SessionOrchestrator is replaced by Pipecat pipeline in Phase 2.
+# Tests skipped: will be rewritten against Pipecat MockTransport in Phase 2 (ADR-011).
 """
 
 import asyncio
@@ -9,15 +9,18 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from app.adapters.llm.protocol import LLMRequest
-from app.adapters.stt.protocol import STTResult
-from app.adapters.tts.protocol import TTSRequest
+from app.adapters.llm.ollama_client import LLMRequest
+from app.adapters.stt.faster_whisper_client import STTResult
+from app.adapters.tts.qwen3_client import TTSRequest
 from app.core.counting import BeatEvent, ExerciseMode
 from app.core.intent import IntentClassifier
 from app.core.orchestrator import SessionMode, SessionOrchestrator
 from app.core.safety import DangerLevel, SafetyGuard
 from app.core.state_machine import SessionState
 from app.messages import MSG_LLM_TIMEOUT
+
+# DEPRECATED: SessionOrchestrator replaced by Pipecat pipeline in Phase 2 (ADR-011)
+pytestmark = pytest.mark.skip(reason="Orchestrator deprecated; replaced by Pipecat in Phase 2")
 
 # --- Mock adapters (ADR-010 Protocol compliant) --------------------------
 

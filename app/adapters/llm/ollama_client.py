@@ -1,25 +1,36 @@
 import asyncio
-import logging
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import ollama
+from loguru import logger
 
-from app.adapters.llm.protocol import LLMMessage, LLMRequest
 from app.config import AppConfig
 
-logger = logging.getLogger(__name__)
-
-# Cold-loading a 9B model into VRAM can take well over the coaching timeout,
-# so warmup uses its own generous budget instead of llm.timeout_sec.
 _WARMUP_TIMEOUT_SEC: float = 120.0
 _WARMUP_KEEP_ALIVE: str = "1h"
 
 
-class OllamaAdapter:
+@dataclass
+class LLMMessage:
+    role: str  # "system" | "user" | "assistant"
+    content: str
+
+
+@dataclass
+class LLMRequest:
+    messages: list[LLMMessage]
+    temperature: float = 0.7
+    max_tokens: int = 512
+    keep_alive: str = "1h"
+    think: bool = False  # Qwen3 thinking mode — False for fast coaching responses
+
+
+class OllamaClient:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._model: str = config.llm.models[config.llm.active]
+        self._model: str = config.llm.model
         self._client = ollama.AsyncClient(host=config.llm.host)
 
     async def generate(self, request: LLMRequest) -> str:
@@ -39,10 +50,10 @@ class OllamaAdapter:
             )
             return response.message.content or ""
         except TimeoutError:
-            logger.warning("LLM generate timed out after %.1fs", self._config.llm.timeout_sec)
+            logger.warning("LLM generate timed out after {:.1f}s", self._config.llm.timeout_sec)
             raise
         except Exception as e:
-            logger.error("LLM generate failed: %s", e)
+            logger.error("LLM generate failed: {}", e)
             raise
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
@@ -66,17 +77,16 @@ class OllamaAdapter:
                 if content:
                     yield content
         except TimeoutError:
-            logger.warning("LLM stream open timed out after %.1fs", self._config.llm.timeout_sec)
+            logger.warning("LLM stream open timed out after {:.1f}s", self._config.llm.timeout_sec)
             raise
         except Exception as e:
-            logger.error("LLM stream failed: %s", e)
+            logger.error("LLM stream failed: {}", e)
             raise
 
     async def warmup(self) -> None:
         """Load the model into VRAM so the first real request isn't a cold start.
 
-        Best-effort and self-contained: uses a long timeout (cold load > coaching
-        timeout) and never raises — a failed warmup must not block startup.
+        Best-effort and self-contained: uses a long timeout and never raises.
         """
         try:
             await asyncio.wait_for(
@@ -89,16 +99,16 @@ class OllamaAdapter:
                 ),
                 timeout=_WARMUP_TIMEOUT_SEC,
             )
-            logger.info("LLM model warmed up: %s", self._model)
+            logger.info("LLM model warmed up: {}", self._model)
         except Exception as e:  # noqa: BLE001 — warmup is best-effort
-            logger.warning("LLM warmup failed: %s", e)
+            logger.warning("LLM warmup failed: {}", e)
 
     async def health(self) -> bool:
         try:
             await asyncio.wait_for(self._client.list(), timeout=3.0)
             return True
         except Exception as e:
-            logger.warning("Ollama health check failed: %s", e)
+            logger.warning("Ollama health check failed: {}", e)
             return False
 
 
@@ -106,20 +116,20 @@ async def _smoke_test(prompt: str) -> None:
     from app.config import load_config
 
     config = load_config()
-    adapter = OllamaAdapter(config)
+    client = OllamaClient(config)
 
-    if not await adapter.health():
+    if not await client.health():
         print("Ollama not available", file=sys.stderr)
         sys.exit(1)
 
     request = LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
 
     print("--- generate ---")
-    response = await adapter.generate(request)
+    response = await client.generate(request)
     print(response)
 
     print("--- stream ---")
-    async for chunk in adapter.stream(request):
+    async for chunk in client.stream(request):
         print(chunk, end="", flush=True)
     print()
 

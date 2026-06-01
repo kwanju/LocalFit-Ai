@@ -2,23 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import io
-import logging
 import sys
 import time
 import wave
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
 
-from app.adapters.tts.protocol import TTSRequest
+from loguru import logger
+
 from app.config import AppConfig
 
-logger = logging.getLogger(__name__)
-
 _INT16_MAX = 32767  # int16 정규화 상수 (float32 [-1, 1] → int16)
+
+
+@dataclass
+class TTSRequest:
+    text: str
+    voice: str = "default"
+    speed: float = 1.0
 
 
 def _float32_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
@@ -35,10 +41,10 @@ def _float32_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
-class Qwen3TTSAdapter:
+class Qwen3TTSClient:
     def __init__(self, config: AppConfig) -> None:
         import torch
-        from qwen_tts import Qwen3TTSModel
+        from transformers import AutoProcessor, Qwen3ForConditionalGeneration
 
         qwen_cfg = config.tts.qwen3
 
@@ -54,26 +60,34 @@ class Qwen3TTSAdapter:
         self._ref_text: str = qwen_cfg.get("ref_text", "")
         self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
         model_id: str = qwen_cfg.get("model_id", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+        attn_impl: str = qwen_cfg.get("attn_implementation", "sdpa")
+        device_map: str = qwen_cfg.get("device_map", "cuda:0")
 
-        logger.info("Loading Qwen3-TTS model: %s", model_id)
-        self._model = Qwen3TTSModel.from_pretrained(
+        logger.info("Loading Qwen3-TTS model: {} attn={}", model_id, attn_impl)
+        self._processor = AutoProcessor.from_pretrained(model_id)
+        self._model = Qwen3ForConditionalGeneration.from_pretrained(
             model_id,
-            device_map="cuda:0",
-            dtype=torch.bfloat16,
+            attn_implementation=attn_impl,
+            device_map=device_map,
+            torch_dtype=torch.bfloat16,
         )
-        logger.info("Qwen3-TTS model loaded: %s", model_id)
+        logger.info("Qwen3-TTS model loaded: {}", model_id)
 
     def _synthesize_sync(self, text: str) -> tuple:
         t0 = time.monotonic()
-        wavs, sr = self._model.generate_voice_clone(
+        inputs = self._processor(
             text=text,
-            language="Korean",
-            ref_audio=self._ref_audio_path,
+            ref_audio_path=self._ref_audio_path,
             ref_text=self._ref_text,
-        )
+            return_tensors="pt",
+        ).to(self._model.device)
+        with __import__("torch").no_grad():
+            output = self._model.generate(**inputs)
+        audio = self._processor.decode(output[0], skip_special_tokens=True)
+        sr = self._processor.feature_extractor.sampling_rate
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        logger.info("Qwen3-TTS synthesized %d chars in %dms", len(text), elapsed_ms)
-        return wavs[0], int(sr)
+        logger.info("Qwen3-TTS synthesized {} chars in {}ms", len(text), elapsed_ms)
+        return audio, int(sr)
 
     async def synthesize(self, request: TTSRequest) -> bytes:
         try:
@@ -83,14 +97,14 @@ class Qwen3TTSAdapter:
             )
             return _float32_to_wav(audio, sample_rate)
         except TimeoutError:
-            logger.warning("Qwen3-TTS synthesis timed out after %.1fs", self._timeout_sec)
+            logger.warning("Qwen3-TTS synthesis timed out after {:.1f}s", self._timeout_sec)
             raise
         except Exception as e:
-            logger.error("Qwen3-TTS synthesis failed: %s", e)
+            logger.error("Qwen3-TTS synthesis failed: {}", e)
             raise
 
     async def stream(self, request: TTSRequest) -> AsyncIterator[bytes]:
-        # Qwen3-TTS has no native streaming — yield full audio as one chunk
+        # Full synthesis first; sentence-streaming added in Phase 3 (ADR-006)
         wav_bytes = await self.synthesize(request)
         yield wav_bytes
 
@@ -102,14 +116,14 @@ async def _smoke_test(text: str) -> None:
     from app.config import load_config
 
     config = load_config()
-    adapter = Qwen3TTSAdapter(config)
+    client = Qwen3TTSClient(config)
 
-    if not await adapter.health():
+    if not await client.health():
         print("Qwen3-TTS 모델이 로드되지 않았습니다.", file=sys.stderr)
         sys.exit(1)
 
     request = TTSRequest(text=text)
-    wav_bytes = await adapter.synthesize(request)
+    wav_bytes = await client.synthesize(request)
 
     out_path = "qwen3_smoke.wav"
     with open(out_path, "wb") as f:
