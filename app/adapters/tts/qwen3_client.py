@@ -43,11 +43,9 @@ def _float32_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
 
 class Qwen3TTSClient:
     def __init__(self, config: AppConfig) -> None:
-        import torch
-        from transformers import AutoProcessor, Qwen3ForConditionalGeneration
-
         qwen_cfg = config.tts.qwen3
 
+        # Config validation first (before heavy imports so tests can catch errors cheaply).
         ref_audio_path = qwen_cfg.get("ref_audio_path", "")
         if not ref_audio_path:
             raise ValueError("config.yaml에 tts.qwen3.ref_audio_path를 설정해 주세요.")
@@ -56,14 +54,18 @@ class Qwen3TTSClient:
         if not ref_file.exists():
             raise FileNotFoundError(f"참조 음성 파일을 찾을 수 없습니다: {ref_audio_path}")
 
+        if "model_id" not in qwen_cfg:
+            raise ValueError("config.yaml에 tts.qwen3.model_id를 설정해 주세요.")
+
         self._ref_audio_path = str(ref_file)
         self._ref_text: str = qwen_cfg.get("ref_text", "")
         self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
-        if "model_id" not in qwen_cfg:
-            raise ValueError("config.yaml에 tts.qwen3.model_id를 설정해 주세요.")
         model_id: str = qwen_cfg["model_id"]
         attn_impl: str = qwen_cfg.get("attn_implementation", "sdpa")
         device_map: str = qwen_cfg.get("device_map", "cuda:0")
+
+        import torch
+        from transformers import AutoProcessor, Qwen3ForConditionalGeneration
 
         self._torch = torch  # 스레드에서 접근용 (asyncio.to_thread 내 사용)
         logger.info("Loading Qwen3-TTS model: {} attn={}", model_id, attn_impl)
@@ -76,7 +78,7 @@ class Qwen3TTSClient:
         )
         logger.info("Qwen3-TTS model loaded: {}", model_id)
 
-    def _synthesize_sync(self, text: str) -> tuple:
+    def _synthesize_sync(self, text: str) -> tuple[np.ndarray, int]:
         t0 = time.monotonic()
         inputs = self._processor(
             text=text,

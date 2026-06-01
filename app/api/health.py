@@ -14,8 +14,8 @@ try:
     from app.pipecat_services.pipeline_builder import build_pipeline  # noqa: F401
 
     _PIPECAT_OK = True
-except Exception:
-    pass
+except Exception as e:
+    logger.warning("Pipecat pipeline_builder import failed: {}", e)
 
 
 async def _probe(name: str, adapter: object | None) -> tuple[str, bool]:
@@ -24,7 +24,7 @@ async def _probe(name: str, adapter: object | None) -> tuple[str, bool]:
     try:
         return name, await adapter.health()  # type: ignore[attr-defined]
     except Exception as e:  # noqa: BLE001 — a probe failure must not break /health
-        logger.warning("Health probe failed for %s: %s", name, e)
+        logger.warning("Health probe failed for {}: {}", name, e)
         return name, False
 
 
