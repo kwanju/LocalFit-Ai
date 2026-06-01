@@ -1,4 +1,4 @@
-"""GET /health — backend + per-adapter status aggregation (ADR-014)."""
+"""GET /health — backend + per-adapter + pipecat status aggregation."""
 
 import asyncio
 
@@ -8,6 +8,14 @@ from loguru import logger
 router = APIRouter(tags=["health"])
 
 _ADAPTER_NAMES: tuple[str, ...] = ("llm", "stt", "tts")
+
+_PIPECAT_OK: bool = False
+try:
+    from app.pipecat_services.pipeline_builder import build_pipeline  # noqa: F401
+
+    _PIPECAT_OK = True
+except Exception:
+    pass
 
 
 async def _probe(name: str, adapter: object | None) -> tuple[str, bool]:
@@ -26,4 +34,4 @@ async def health(request: Request) -> dict:
     probes = [_probe(name, getattr(state, name, None)) for name in _ADAPTER_NAMES]
     adapters = dict(await asyncio.gather(*probes))
     status = "ok" if all(adapters.values()) else "degraded"
-    return {"status": status, "backend": True, "adapters": adapters}
+    return {"status": status, "backend": True, "pipecat": _PIPECAT_OK, "adapters": adapters}
