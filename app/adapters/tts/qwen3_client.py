@@ -59,10 +59,13 @@ class Qwen3TTSClient:
         self._ref_audio_path = str(ref_file)
         self._ref_text: str = qwen_cfg.get("ref_text", "")
         self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
-        model_id: str = qwen_cfg.get("model_id", "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+        if "model_id" not in qwen_cfg:
+            raise ValueError("config.yaml에 tts.qwen3.model_id를 설정해 주세요.")
+        model_id: str = qwen_cfg["model_id"]
         attn_impl: str = qwen_cfg.get("attn_implementation", "sdpa")
         device_map: str = qwen_cfg.get("device_map", "cuda:0")
 
+        self._torch = torch  # 스레드에서 접근용 (asyncio.to_thread 내 사용)
         logger.info("Loading Qwen3-TTS model: {} attn={}", model_id, attn_impl)
         self._processor = AutoProcessor.from_pretrained(model_id)
         self._model = Qwen3ForConditionalGeneration.from_pretrained(
@@ -81,7 +84,7 @@ class Qwen3TTSClient:
             ref_text=self._ref_text,
             return_tensors="pt",
         ).to(self._model.device)
-        with __import__("torch").no_grad():
+        with self._torch.no_grad():
             output = self._model.generate(**inputs)
         audio = self._processor.decode(output[0], skip_special_tokens=True)
         sr = self._processor.feature_extractor.sampling_rate

@@ -4,12 +4,9 @@
 
 llm:
   host: "http://127.0.0.1:11434"   # Ollama 서버 주소 (ADR-002: 로컬만 허용)
-  active: "qwen3.5"                 # 활성 모델 키 (ADR-004)
-  models:
-    qwen3.5: "qwen3.5:9b"          # 기본 코칭 모델
-    gemma4: "gemma4:e4b"           # 경량 대안 모델
-  timeout_sec: 4.0                  # LLM 응답 타임아웃 (PRD 3-1)
-  keep_alive: "10m"                 # Ollama 모델 메모리 유지 시간 (ADR-011)
+  model: "qwen3:8b"                 # 단일 코칭 모델 (ADR-004)
+  timeout_sec: 8.0                  # LLM 응답 타임아웃
+  keep_alive: "24h"                 # 모델 unload 방지
 
 stt:
   model: "large-v3-turbo"           # faster-whisper 모델 (ADR-005)
@@ -19,23 +16,31 @@ stt:
   timeout_sec: 30.0                 # 전사 최대 허용 시간(초)
 
 tts:
-  active: "qwen3"                    # ADR-006: Qwen3-TTS (유일 구현체)
+  active: "qwen3"                   # ADR-006: Qwen3-TTS 단일
   qwen3:
     model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     ref_audio_path: "data/ref_voice.wav"   # 참조 음성 (3초 이상 한국어 WAV)
-    ref_text: ""                     # 참조 음성 전사 텍스트 (빈 칸 허용, 정확도 향상용)
-    timeout_sec: "60.0"              # 합성 최대 허용 시간(초)
+    ref_text: ""                    # 참조 음성 전사 텍스트 (정확도 향상용)
+    attn_implementation: "sdpa"     # SDPA 어텐션 (ADR-006: flash-attn 없이 ~97ms)
+    device_map: "cuda:0"
+    streaming: "true"               # sentence-streaming (Phase 3 구현)
+    timeout_sec: "60.0"
     voice: "default"
     speed: "1.0"
 
 vad:
-  model: "silero_vad"               # silero-vad (ADR-012)
+  model: "silero_vad"               # silero-vad via pipecat-ai[silero] (ADR-007)
   threshold: 0.5                    # 음성 감지 임계값
   min_silence_ms: 700               # 발화 종료 판정 최소 침묵 구간(ms)
 
 db:
-  path: "data/localfit.db"          # SQLite 파일 경로 (ADR-007)
+  path: "data/localfit.db"          # SQLite 파일 경로 (ADR-008)
 
 counting:
   beat_interval_sec: 2.0            # 운동 박자 간격(초)
   max_reps: 200                     # 단일 세트 최대 반복 횟수 (안전 한도)
+
+coach:
+  proactive_opener: true            # 능동 코치 첫 발화 자동 시작 (ADR-013)
+  instructor:
+    max_retries: 2                  # instructor JSON 재시도 횟수 (ADR-013)
