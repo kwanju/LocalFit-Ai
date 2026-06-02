@@ -129,7 +129,6 @@ app.include_router(session.router)
 app.include_router(routine.router)
 app.include_router(onboarding.router)
 app.include_router(ws_voice.router)
-# ws_coach.router — DEPRECATED, removed in Phase 1. Replaced by ws_voice in Phase 2.
 
 
 if __name__ == "__main__":

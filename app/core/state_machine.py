@@ -1,7 +1,8 @@
 """Session lifecycle state machine.
 
 Pure Python — no FastAPI / SQLModel / Ollama imports (per CLAUDE.md §4).
-The orchestrator drives transitions; this module only defines the legal set.
+Defines the legal transition set; callers (Pipecat processors / session API)
+drive transitions via :func:`transition`.
 """
 
 from enum import StrEnum

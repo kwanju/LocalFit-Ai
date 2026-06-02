@@ -52,7 +52,8 @@ class SessionRepository:
         return ws
 
     async def update_status(self, session_id: int, status: str) -> None:
-        """SessionPersister surface for the orchestrator (ADR-007). String status from core."""
+        """Update workout-session status by string value (ADR-008). Auto-stamps
+        ``ended_at`` when transitioning to a terminal status."""
         ws = await self.get_by_id(session_id)
         if ws is None:
             logger.warning("update_status: session %d not found", session_id)
