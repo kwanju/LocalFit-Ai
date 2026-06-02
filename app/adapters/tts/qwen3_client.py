@@ -92,63 +92,72 @@ class Qwen3TTSClient:
 
     def __init__(self, config: AppConfig) -> None:
         qwen_cfg = config.tts.qwen3
+        self._ref_audio_path, self._ref_text, model_id, attn_impl, device_map = (
+            self._validate_config(qwen_cfg)
+        )
+        self._language: str = qwen_cfg.get("language", "Korean")
+        self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
+        self._model, self._torch = self._load_model(model_id, attn_impl, device_map)
+        self._voice_prompt = self._compute_voice_prompt()
+        logger.info("Qwen3-TTS ready: {} sample_rate={}", model_id, _OUTPUT_SAMPLE_RATE)
 
+    @staticmethod
+    def _validate_config(qwen_cfg: dict) -> tuple[str, str, str, str, str]:
+        """Validate the `tts.qwen3` config dict and return the fields needed for load."""
         ref_audio_path = qwen_cfg.get("ref_audio_path", "")
         if not ref_audio_path:
             raise ValueError("config.yaml에 tts.qwen3.ref_audio_path를 설정해 주세요.")
         ref_file = Path(ref_audio_path)
         if not ref_file.exists():
             raise FileNotFoundError(f"참조 음성 파일을 찾을 수 없습니다: {ref_audio_path}")
-
         if "model_id" not in qwen_cfg:
             raise ValueError("config.yaml에 tts.qwen3.model_id를 설정해 주세요.")
+        return (
+            str(ref_file),
+            qwen_cfg.get("ref_text", ""),
+            qwen_cfg["model_id"],
+            qwen_cfg.get("attn_implementation", "sdpa"),
+            qwen_cfg.get("device_map", "cuda:0"),
+        )
 
-        self._ref_audio_path = str(ref_file)
-        self._ref_text: str = qwen_cfg.get("ref_text", "")
-        self._language: str = qwen_cfg.get("language", "Korean")
-        self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
-        model_id: str = qwen_cfg["model_id"]
-        attn_impl: str = qwen_cfg.get("attn_implementation", "sdpa")
-        device_map: str = qwen_cfg.get("device_map", "cuda:0")
-
+    @staticmethod
+    def _load_model(model_id: str, attn_impl: str, device_map: str):
+        """Load Qwen3TTSModel with sdpa→eager fallback (ADR-006).  Returns (model, torch)."""
         import torch
         from qwen_tts import Qwen3TTSModel  # type: ignore[import-not-found]
 
-        self._torch = torch
         logger.info(
             "Loading Qwen3-TTS model: {} attn={} device={}", model_id, attn_impl, device_map
         )
         try:
-            self._model = Qwen3TTSModel.from_pretrained(
+            model = Qwen3TTSModel.from_pretrained(
                 model_id,
                 device_map=device_map,
                 dtype=torch.bfloat16,
                 attn_implementation=attn_impl,
             )
         except (ValueError, RuntimeError, ImportError) as e:
-            # SDPA may not be wired for every layer in some upstream versions —
-            # fall back to "eager" rather than failing the whole adapter (ADR-006).
-            if attn_impl == "sdpa":
-                logger.warning(
-                    "Qwen3-TTS sdpa load failed ({}); retrying with attn_implementation='eager'",
-                    e,
-                )
-                self._model = Qwen3TTSModel.from_pretrained(
-                    model_id,
-                    device_map=device_map,
-                    dtype=torch.bfloat16,
-                    attn_implementation="eager",
-                )
-            else:
+            if attn_impl != "sdpa":
                 raise
+            logger.warning(
+                "Qwen3-TTS sdpa load failed ({}); retrying with attn_implementation='eager'",
+                e,
+            )
+            model = Qwen3TTSModel.from_pretrained(
+                model_id,
+                device_map=device_map,
+                dtype=torch.bfloat16,
+                attn_implementation="eager",
+            )
+        return model, torch
 
-        # Cache the voice-clone prompt once — per-utterance call only does synth.
+    def _compute_voice_prompt(self):
+        """Cache the voice-clone prompt once so per-utterance cost is synth only."""
         logger.info("Computing voice-clone prompt from {}", self._ref_audio_path)
-        self._voice_prompt = self._model.create_voice_clone_prompt(
+        return self._model.create_voice_clone_prompt(
             ref_audio=self._ref_audio_path,
             ref_text=self._ref_text or None,
         )
-        logger.info("Qwen3-TTS ready: {} sample_rate={}", model_id, _OUTPUT_SAMPLE_RATE)
 
     def _synth_sentence(self, sentence: str) -> tuple[np.ndarray, int]:
         """Synchronously synthesise one sentence. Returns (float waveform, sample rate)."""
