@@ -50,6 +50,13 @@ counting:
   max_reps: 200                     # 단일 세트 최대 반복 횟수 (안전 한도)
 
 coach:
-  proactive_opener: true            # 능동 코치 첫 발화 자동 시작 (ADR-013)
+  proactive_opener: true            # 능동 코치 첫 발화 자동 시작 (ADR-013 §0)
+  context_recent_sessions: 5        # 최근 N회 세션을 컨텍스트에 포함 (ADR-013)
+  response_length:                  # 시스템 프롬프트 가이드 + Pydantic max_length=500 안전망
+    proactive_opener_max: 70
+    proactive_proposal_max: 120
+    reactive_max: 500
+    safety_max: 150
   instructor:
     max_retries: 2                  # instructor JSON 재시도 횟수 (ADR-013)
+    mode: "json"                    # instructor.Mode.JSON (Ollama OpenAI-compat)

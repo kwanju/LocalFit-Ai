@@ -3,20 +3,29 @@
 Query param: ?mode=S2S|C2S|C2C|S2C  (default: C2C)
 
 Phase 4: real STT (faster-whisper) + silero VAD wired in for S2S/S2C.
-Smart Turn is gated by `config.vad.use_smart_turn` (default false, P1).
+Phase 5: SafetyGuard / ConfirmRule / StructuredOllama / ActionDispatcher
+processors compose the active-coach pipeline (ADR-013). The proactive opener
+runs once per session when ``config.coach.proactive_opener`` is true.
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
+from pipecat.frames.frames import TextFrame
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import AppConfig
+from app.core.confirm_slot import ConfirmSlot
+from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
+from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
+from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
+from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
+from app.prompts.coaching import PROACTIVE_OPENER_USER_MESSAGE
 
 router = APIRouter(tags=["ws"])
 
@@ -40,12 +49,7 @@ def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
 
 @router.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
-    """Pipecat 4-mode voice pipeline endpoint.
-
-    Args:
-        websocket: FastAPI WebSocket connection.
-        mode: Session mode — S2S / C2S / C2C / S2C (case-insensitive).
-    """
+    """Pipecat 4-mode voice pipeline endpoint."""
     try:
         session_mode = SessionMode(mode.upper())
     except ValueError:
@@ -74,19 +78,38 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     stt_service = getattr(websocket.app.state, "stt_service", None) if use_stt else None
     vad_analyzer = _build_vad_analyzer(config) if (config and use_stt) else None
 
+    # ADR-013: shared ConfirmSlot between ConfirmRule + ActionDispatcher.
+    slot = ConfirmSlot()
+    llm_processor = StructuredOllamaProcessor(config) if config else None
+    safety = SafetyGuardProcessor()
+    confirm = ConfirmRuleProcessor(slot)
+    dispatcher = ActionDispatcherProcessor(slot)
+
     pipeline = build_pipeline(
         transport,
         session_mode,
+        llm_processor=llm_processor,
         tts_service=tts_service,
         stt_service=stt_service,
         vad_analyzer=vad_analyzer,
+        safety_processor=safety,
+        confirm_processor=confirm,
+        action_dispatcher=dispatcher,
+        confirm_slot=slot,
     )
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
 
+    proactive_enabled = bool(
+        config and config.coach.proactive_opener and llm_processor is not None
+    )
+
     @transport.event_handler("on_client_connected")
     async def on_connected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
         logger.info("ws_voice client connected: mode={}", session_mode.value)
+        if proactive_enabled:
+            logger.info("ws_voice: injecting proactive opener (ADR-013 §0)")
+            await worker.queue_frame(TextFrame(text=PROACTIVE_OPENER_USER_MESSAGE))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:

@@ -49,10 +49,22 @@ class CountingConfig(BaseModel):
 
 class InstructorConfig(BaseModel):
     max_retries: int = 2
+    mode: str = "json"               # ADR-013: instructor.Mode.JSON for Ollama
+
+
+class CoachResponseLengthConfig(BaseModel):
+    """Soft length budgets — Pydantic ``max_length=500`` is the hard cap (ADR-013)."""
+
+    proactive_opener_max: int = 70
+    proactive_proposal_max: int = 120
+    reactive_max: int = 500
+    safety_max: int = 150
 
 
 class CoachConfig(BaseModel):
     proactive_opener: bool = True
+    context_recent_sessions: int = 5
+    response_length: CoachResponseLengthConfig = CoachResponseLengthConfig()
     instructor: InstructorConfig = InstructorConfig()
 
 

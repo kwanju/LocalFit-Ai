@@ -9,6 +9,12 @@ ADR-009 §4-모드 분리:
 VAD (ADR-007/011): SileroVADAnalyzer drives a VADProcessor inserted between the
 transport input and STT for S2S/S2C. Smart Turn is structurally allowed but
 gated by `config.vad.use_smart_turn` (default false, P1).
+
+Phase 5 (ADR-013): SafetyGuard → ConfirmRule → StructuredOllama →
+ActionDispatcher replaces the v1 echo MockLLMProcessor. ws_voice.py passes a
+real ``StructuredOllamaProcessor`` (and the ConfirmSlot it shares with
+ActionDispatcher); if it omits them — e.g. shell-only tests — the builder
+falls back to MockLLMProcessor to preserve phase-2 behaviour.
 """
 
 from enum import StrEnum
@@ -21,9 +27,13 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
 
+from app.core.confirm_slot import ConfirmSlot
 from app.pipecat_services.mock_llm_service import MockLLMProcessor
 from app.pipecat_services.mock_stt_service import MockSTTService
 from app.pipecat_services.mock_tts_service import MockTTSService
+from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
+from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
+from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
 
 
 class SessionMode(StrEnum):
@@ -41,20 +51,26 @@ def build_pipeline(
     stt_service: FrameProcessor | None = None,
     tts_service: FrameProcessor | None = None,
     vad_analyzer: VADAnalyzer | None = None,
+    safety_processor: FrameProcessor | None = None,
+    confirm_processor: FrameProcessor | None = None,
+    action_dispatcher: FrameProcessor | None = None,
+    confirm_slot: ConfirmSlot | None = None,
 ) -> Pipeline:
     """Build a mode-specific Pipecat pipeline.
 
     Args:
         transport: The FastAPIWebsocketTransport to use for I/O.
         mode: One of S2S / C2S / C2C / S2C.
-        llm_processor: Override default MockLLMProcessor (for future phases).
-        stt_service: Override default MockSTTService. Pass `LocalFitWhisperSTTService`
-            from lifespan to get real STT (ADR-005).
-        tts_service: Override default MockTTSService. Pass the lifespan-loaded
-            Qwen3/Melo service for real audio output (ADR-006).
-        vad_analyzer: Optional Pipecat VADAnalyzer (e.g. SileroVADAnalyzer) — when
-            provided and STT is active, a VADProcessor is inserted before the STT
-            service so VAD events drive `SegmentedSTTService.run_stt`.
+        llm_processor: Override default MockLLMProcessor (phase-5 wires
+            ``StructuredOllamaProcessor`` here).
+        stt_service: Override default MockSTTService.
+        tts_service: Override default MockTTSService.
+        vad_analyzer: Optional Pipecat VADAnalyzer.
+        safety_processor / confirm_processor / action_dispatcher: Phase-5
+            ADR-013 processors. When omitted, the builder constructs defaults
+            backed by ``confirm_slot`` (or a fresh one).
+        confirm_slot: Shared slot for ConfirmRule + ActionDispatcher. Provide
+            when ws_voice needs access to inspect the pending proposal.
     """
     if isinstance(mode, str):
         mode = SessionMode(mode.upper())
@@ -63,6 +79,11 @@ def build_pipeline(
     stt = stt_service or MockSTTService()
     tts = tts_service or MockTTSService()
 
+    slot = confirm_slot or ConfirmSlot()
+    safety = safety_processor or SafetyGuardProcessor()
+    confirm = confirm_processor or ConfirmRuleProcessor(slot)
+    dispatcher = action_dispatcher or ActionDispatcherProcessor(slot)
+
     processors: list[FrameProcessor] = [transport.input()]
 
     use_stt = mode in (SessionMode.s2s, SessionMode.s2c)
@@ -70,13 +91,16 @@ def build_pipeline(
 
     if use_stt:
         # SileroVADAnalyzer (ADR-007) emits VADUserStarted/Stopped frames that
-        # SegmentedSTTService consumes to bracket transcription. Without it, the
-        # STT service has no signal to flush its audio buffer.
+        # SegmentedSTTService consumes to bracket transcription.
         if vad_analyzer is not None:
             processors.append(VADProcessor(vad_analyzer=vad_analyzer))
         processors.append(stt)
 
+    # ADR-013 coach pipeline: safety → confirm → LLM → dispatcher.
+    processors.append(safety)
+    processors.append(confirm)
     processors.append(llm)
+    processors.append(dispatcher)
 
     if use_tts:
         # Sentence-batch TTS (ADR-006): SentenceAggregator buffers streaming
@@ -87,9 +111,12 @@ def build_pipeline(
     processors.append(transport.output())
 
     logger.info(
-        "Pipeline assembled: mode={} processors={} vad={}",
+        "Pipeline assembled: mode={} processors={} vad={} safety={} confirm={} dispatch={}",
         mode.value,
         len(processors),
         vad_analyzer is not None,
+        type(safety).__name__,
+        type(confirm).__name__,
+        type(dispatcher).__name__,
     )
     return Pipeline(processors)
