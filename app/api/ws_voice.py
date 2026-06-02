@@ -6,6 +6,9 @@ Phase 4: real STT (faster-whisper) + silero VAD wired in for S2S/S2C.
 Phase 5: SafetyGuard / ConfirmRule / StructuredOllama / ActionDispatcher
 processors compose the active-coach pipeline (ADR-013). The proactive opener
 runs once per session when ``config.coach.proactive_opener`` is true.
+Phase 6: CountingManager + CountingInjectProcessor wired; WorkoutSession
+created on connect; SetLog recorded on counting complete; auto follow-up LLM
+call injected via worker.queue_frame (ADR-014).
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -20,18 +23,24 @@ from pipecat.workers.runner import WorkerRunner
 
 from app.config import AppConfig
 from app.core.confirm_slot import ConfirmSlot
+from app.core.counting import CompleteEvent
+from app.db.engine import create_db_session
+from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
+from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
-from app.prompts.coaching import PROACTIVE_OPENER_USER_MESSAGE
+from app.prompts.coaching import (
+    COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
+    PROACTIVE_OPENER_USER_MESSAGE,
+)
 
 router = APIRouter(tags=["ws"])
 
 
 def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
-    """Construct SileroVADAnalyzer from `config.vad` (ADR-007)."""
     vad_cfg = config.vad
     params = VADParams(
         confidence=vad_cfg.threshold,
@@ -81,9 +90,16 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     # ADR-013: shared ConfirmSlot between ConfirmRule + ActionDispatcher.
     slot = ConfirmSlot()
     llm_processor = StructuredOllamaProcessor(config) if config else None
-    safety = SafetyGuardProcessor()
+
+    # ADR-014 phase-6: CountingManager + CountingInjectProcessor.
+    counting_manager = CountingManager(config.counting) if config else None
+    counting_inject = CountingInjectProcessor()
+    if counting_manager is not None:
+        counting_manager.attach_inject_processor(counting_inject)
+
+    safety = SafetyGuardProcessor(counting_manager=counting_manager)
     confirm = ConfirmRuleProcessor(slot)
-    dispatcher = ActionDispatcherProcessor(slot)
+    dispatcher = ActionDispatcherProcessor(slot, counting_manager=counting_manager)
 
     pipeline = build_pipeline(
         transport,
@@ -96,6 +112,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         confirm_processor=confirm,
         action_dispatcher=dispatcher,
         confirm_slot=slot,
+        counting_inject=counting_inject,
     )
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
@@ -104,9 +121,65 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         config and config.coach.proactive_opener and llm_processor is not None
     )
 
+    # Mutable holder for DB session id (set in on_connected).
+    _db_session_id: list[int | None] = [None]
+
+    # Wire counting complete → SetLog + auto follow-up (ADR-014 §카운팅 완료 처리)
+    if counting_manager is not None:
+        async def on_counting_complete(event: CompleteEvent) -> None:
+            # 1. SetLog 기록
+            if _db_session_id[0] is not None:
+                try:
+                    async with create_db_session() as db:
+                        from app.db.repositories import ExerciseRepository, SetLogRepository
+
+                        ex_repo = ExerciseRepository(db)
+                        ex = await ex_repo.get_by_name(event.exercise_name)
+                        if ex and ex.id is not None:
+                            set_repo = SetLogRepository(db)
+                            reps = event.reps_completed if event.duration_sec is None else None
+                            dur = (
+                                int(event.duration_sec) if event.duration_sec is not None else None
+                            )
+                            await set_repo.create(
+                                session_id=_db_session_id[0],
+                                exercise_id=ex.id,
+                                set_number=1,
+                                reps_completed=reps,
+                                duration_sec=dur,
+                            )
+                            logger.info(
+                                "SetLog recorded: exercise={} reps={} dur={}",
+                                event.exercise_name, reps, dur,
+                            )
+                except Exception as e:  # noqa: BLE001
+                    logger.error("SetLog write failed: {}", e)
+
+            # 2. 자동 follow-up LLM 호출 (ADR-013 §0 능동 주도 원칙)
+            await worker.queue_frame(TextFrame(text=COUNTING_COMPLETE_FOLLOW_UP_MESSAGE))
+            logger.info("ws_voice: injected counting follow-up message")
+
+        counting_manager.on_session_complete = on_counting_complete
+
     @transport.event_handler("on_client_connected")
     async def on_connected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
         logger.info("ws_voice client connected: mode={}", session_mode.value)
+
+        # WorkoutSession 생성 (SetLog 기록에 필요)
+        if config is not None:
+            try:
+                async with create_db_session() as db:
+                    from app.db.models import SessionMode as DBSessionMode
+                    from app.db.repositories import SessionRepository
+
+                    db_mode = DBSessionMode(session_mode.value.lower())
+                    repo = SessionRepository(db)
+                    ws_session = await repo.create(mode=db_mode.value)
+                    _db_session_id[0] = ws_session.id
+                    logger.info("WorkoutSession created: id={}", ws_session.id)
+            except Exception as e:  # noqa: BLE001
+                logger.error("WorkoutSession create failed: {}", e)
+
         if proactive_enabled:
             logger.info("ws_voice: injecting proactive opener (ADR-013 §0)")
             await worker.queue_frame(TextFrame(text=PROACTIVE_OPENER_USER_MESSAGE))
@@ -114,6 +187,26 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
         logger.info("ws_voice client disconnected: mode={}", session_mode.value)
+
+        # 카운팅 중이면 정지
+        if counting_manager is not None:
+            try:
+                await counting_manager.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.error("counting_manager.stop on disconnect failed: {}", e)
+
+        # WorkoutSession 완료 처리
+        if _db_session_id[0] is not None and config is not None:
+            try:
+                async with create_db_session() as db:
+                    from app.db.models import SessionStatus
+                    from app.db.repositories import SessionRepository
+
+                    repo = SessionRepository(db)
+                    await repo.end_session(_db_session_id[0], SessionStatus.completed)
+            except Exception as e:  # noqa: BLE001
+                logger.error("WorkoutSession end failed: {}", e)
+
         await runner.cancel()
 
     try:

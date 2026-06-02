@@ -15,6 +15,10 @@ ActionDispatcher replaces the v1 echo MockLLMProcessor. ws_voice.py passes a
 real ``StructuredOllamaProcessor`` (and the ConfirmSlot it shares with
 ActionDispatcher); if it omits them — e.g. shell-only tests — the builder
 falls back to MockLLMProcessor to preserve phase-2 behaviour.
+
+Phase 6 (ADR-014): ``CountingInjectProcessor`` is inserted between
+``ActionDispatcherProcessor`` and ``SentenceAggregator`` so beat cues flow
+through the same TTS queue as LLM response text.
 """
 
 from enum import StrEnum
@@ -55,6 +59,7 @@ def build_pipeline(
     confirm_processor: FrameProcessor | None = None,
     action_dispatcher: FrameProcessor | None = None,
     confirm_slot: ConfirmSlot | None = None,
+    counting_inject: FrameProcessor | None = None,
 ) -> Pipeline:
     """Build a mode-specific Pipecat pipeline.
 
@@ -71,6 +76,8 @@ def build_pipeline(
             backed by ``confirm_slot`` (or a fresh one).
         confirm_slot: Shared slot for ConfirmRule + ActionDispatcher. Provide
             when ws_voice needs access to inspect the pending proposal.
+        counting_inject: Phase-6 ``CountingInjectProcessor`` — inserted between
+            ActionDispatcher and SentenceAggregator. Omit for non-counting tests.
     """
     if isinstance(mode, str):
         mode = SessionMode(mode.upper())
@@ -102,6 +109,10 @@ def build_pipeline(
     processors.append(llm)
     processors.append(dispatcher)
 
+    # ADR-014 phase-6: counting beat inject (between dispatcher and TTS).
+    if counting_inject is not None:
+        processors.append(counting_inject)
+
     if use_tts:
         # Sentence-batch TTS (ADR-006): SentenceAggregator buffers streaming
         # TextFrames into sentence-sized chunks before they hit the TTS service.
@@ -111,12 +122,10 @@ def build_pipeline(
     processors.append(transport.output())
 
     logger.info(
-        "Pipeline assembled: mode={} processors={} vad={} safety={} confirm={} dispatch={}",
+        "Pipeline assembled: mode={} processors={} vad={} counting_inject={}",
         mode.value,
         len(processors),
         vad_analyzer is not None,
-        type(safety).__name__,
-        type(confirm).__name__,
-        type(dispatcher).__name__,
+        counting_inject is not None,
     )
     return Pipeline(processors)

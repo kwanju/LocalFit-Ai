@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(pytest:*)",
+      "Bash(uv run python:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./.venv/**)",
+      "Read(./node_modules/**)",
+      "Read(./ui/node_modules/**)",
+      "Read(./ui/dist/**)",
+      "Read(./models/**)",
+      "Read(**/*.gguf)",
+      "Read(**/*.bin)",
+      "Read(**/*.db)",
+      "Bash(rm -rf:*)"
+    ],
+    "defaultMode": "default"
+  }
+}

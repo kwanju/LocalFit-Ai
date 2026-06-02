@@ -57,3 +57,7 @@ PROACTIVE_OPENER_USER_MESSAGE: str = (
     "(세션을 시작했습니다. 사용자에게 짧게 인사하고, "
     "캘린더 패턴과 최근 컨디션을 토대로 오늘의 추천 1건을 제안하세요. 70자 이내.)"
 )
+
+COUNTING_COMPLETE_FOLLOW_UP_MESSAGE: str = (
+    "(세트 완료. 다음 세트/휴식/종료 중 하나를 짧게 제안하세요. 120자 이내.)"
+)

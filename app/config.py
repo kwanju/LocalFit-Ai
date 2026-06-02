@@ -42,9 +42,20 @@ class DBConfig(BaseModel):
     path: str
 
 
+class EncouragementConfig(BaseModel):
+    enabled: bool = True
+    points: list[float] = [0.33, 0.66, 0.95]
+
+
 class CountingConfig(BaseModel):
     beat_interval_sec: float
     max_reps: int
+    start_delay_sec: float = 1.0          # ADR-014: LLM 응답 TTS 완료 후 grace
+    plank_default_sec: int = 30
+    rest_default_sec: int = 60
+    auto_next_set: bool = False
+    cue_selection: str = "random"         # "random" | "sequential"
+    encouragement: EncouragementConfig = EncouragementConfig()
 
 
 class InstructorConfig(BaseModel):

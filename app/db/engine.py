@@ -1,4 +1,5 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from sqlalchemy import text
@@ -64,6 +65,14 @@ async def _seed_exercises(engine: AsyncEngine) -> None:
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI Depends-compatible async session generator."""
+    _get_engine()
+    async with _session_factory() as session:  # type: ignore[misc]
+        yield session
+
+
+@asynccontextmanager
+async def create_db_session() -> AsyncIterator[AsyncSession]:
+    """Ad-hoc async session context manager for non-FastAPI use (e.g. ws_voice callbacks)."""
     _get_engine()
     async with _session_factory() as session:  # type: ignore[misc]
         yield session
