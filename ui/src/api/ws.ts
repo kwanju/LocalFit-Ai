@@ -175,6 +175,9 @@ export class CoachSocket {
   }
 
   end(): void {
-    this.send({ type: "end" });
+    if (!this.isOpen) return;
+    this.rawSend({ type: "end" });
+    // Mark intentional so onclose doesn't trigger auto-reconnect.
+    this.intentionalClose = true;
   }
 }

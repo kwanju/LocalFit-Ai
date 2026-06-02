@@ -218,6 +218,14 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
             except Exception as e:  # noqa: BLE001
                 logger.error("WorkoutSession end failed: {}", e)
 
+        # Phase-7: notify UI so session store resets started=false.
+        try:
+            await worker.queue_frame(
+                OutputTransportMessageFrame(message={"type": "session_ended"})
+            )
+        except Exception:  # noqa: BLE001 — best-effort, pipeline may already be torn down
+            pass
+
         await runner.cancel()
 
     try:

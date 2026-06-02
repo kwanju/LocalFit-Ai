@@ -52,8 +52,6 @@ class UIControlProcessor(FrameProcessor):
         if msg_type == "start_counting":
             exercise = str(msg.get("exercise", ""))
             reps = int(msg.get("reps", 0))
-            mode_str = str(msg.get("mode", "metronome"))
-            target_sec = msg.get("target_duration_sec")
             if self._counting_manager is not None and exercise and reps > 0:
                 try:
                     await self._counting_manager.start(exercise, reps)
