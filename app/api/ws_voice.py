@@ -25,6 +25,8 @@ from app.config import AppConfig
 from app.core.confirm_slot import ConfirmSlot
 from app.core.counting import CompleteEvent
 from app.db.engine import create_db_session
+from app.db.models import SessionMode as DBSessionMode, SessionStatus
+from app.db.repositories import ExerciseRepository, SessionRepository, SetLogRepository
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
@@ -131,8 +133,6 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
             if _db_session_id[0] is not None:
                 try:
                     async with create_db_session() as db:
-                        from app.db.repositories import ExerciseRepository, SetLogRepository
-
                         ex_repo = ExerciseRepository(db)
                         ex = await ex_repo.get_by_name(event.exercise_name)
                         if ex and ex.id is not None:
@@ -169,9 +169,6 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         if config is not None:
             try:
                 async with create_db_session() as db:
-                    from app.db.models import SessionMode as DBSessionMode
-                    from app.db.repositories import SessionRepository
-
                     db_mode = DBSessionMode(session_mode.value.lower())
                     repo = SessionRepository(db)
                     ws_session = await repo.create(mode=db_mode.value)
@@ -199,9 +196,6 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         if _db_session_id[0] is not None and config is not None:
             try:
                 async with create_db_session() as db:
-                    from app.db.models import SessionStatus
-                    from app.db.repositories import SessionRepository
-
                     repo = SessionRepository(db)
                     await repo.end_session(_db_session_id[0], SessionStatus.completed)
             except Exception as e:  # noqa: BLE001

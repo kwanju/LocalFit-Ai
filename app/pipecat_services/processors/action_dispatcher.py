@@ -25,6 +25,7 @@ from app.core.coach_response import (
     StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
+from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.frames import CoachActionFrame
 
 StartCountingFn = Callable[[StartCountingAction], Awaitable[None]]
@@ -38,7 +39,7 @@ class ActionDispatcherProcessor(FrameProcessor):
         *,
         start_counting: StartCountingFn | None = None,
         log_condition: LogConditionFn | None = None,
-        counting_manager=None,   # CountingManager | None — forward-ref avoids circular import
+        counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
         self._slot = slot

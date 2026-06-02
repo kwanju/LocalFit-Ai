@@ -27,6 +27,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.core.safety import SafetyGuard
+from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.frames import SafetyResponseFrame
 
 _PAUSE_KEYWORDS: frozenset[str] = frozenset(
@@ -59,7 +60,7 @@ class SafetyGuardProcessor(FrameProcessor):
     def __init__(
         self,
         guard: SafetyGuard | None = None,
-        counting_manager=None,   # CountingManager | None — forward-ref avoids circular import
+        counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
         self._guard = guard or SafetyGuard()
