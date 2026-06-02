@@ -1,15 +1,14 @@
-"""Integration tests for the FastAPI layer (phase-4b).
+"""Integration tests for the FastAPI layer.
 
 Uses a temp SQLite DB (dependency override) and a mock LLM adapter so the suite
-runs without GPU / Ollama. Covers one path per endpoint plus the C2C WebSocket
-round-trip (the phase completion criterion).
+runs without GPU / Ollama. Covers one path per endpoint. The voice round-trip
+moved to `tests/integration/test_ws_voice_*.py` (Pipecat path) and the legacy
+`/ws/coach` handler was retired in Phase 1.
 """
 
 import asyncio
-import base64
 from collections.abc import AsyncIterator
 
-import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -17,7 +16,6 @@ from sqlalchemy.pool import NullPool
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.adapters.llm.ollama_client import LLMRequest
-from app.adapters.stt.faster_whisper_client import STTResult
 from app.db.engine import get_session, init_db
 from app.main import app
 
@@ -27,7 +25,7 @@ _RESPONSE_TEXT = "좋아요! 천천히 호흡하면서 계속해봐요."
 
 
 class MockLLM:
-    """ADR-010 Protocol-compliant stub: classifies as 'general', echoes a reply."""
+    """ADR-013 stub: classifies as 'general', echoes a reply."""
 
     async def generate(self, request: LLMRequest) -> str:
         content = request.messages[-1].content
@@ -40,39 +38,6 @@ class MockLLM:
 
     async def health(self) -> bool:
         return True
-
-
-class MockSTT:
-    """ADR-010 Protocol-compliant stub: returns a fixed transcript for any audio."""
-
-    async def transcribe(self, audio_bytes: bytes, sample_rate: int = 16000) -> STTResult:
-        return STTResult(text="스쿼트 폼 알려줘", language="ko", duration_ms=10)
-
-    async def health(self) -> bool:
-        return True
-
-
-class _MockVADStream:
-    """Emits exactly one utterance on the first feed; silent afterwards."""
-
-    def __init__(self) -> None:
-        self._emitted = False
-
-    def feed(self, pcm: np.ndarray) -> list[np.ndarray]:
-        if self._emitted:
-            return []
-        self._emitted = True
-        return [np.zeros(8000, dtype=np.float32)]
-
-    def reset(self) -> None:
-        self._emitted = False
-
-
-class MockVAD:
-    """Stub VAD matching SileroVADWrapper.new_stream() surface used by ws_coach."""
-
-    def new_stream(self) -> _MockVADStream:
-        return _MockVADStream()
 
 
 @pytest.fixture
@@ -150,71 +115,3 @@ def test_onboarding_generates_first_routine(client: TestClient) -> None:
     status = client.get("/onboarding")
     assert status.json()["onboarded"] is True
     assert status.json()["profile"]["goal"] == "근력 향상"
-
-
-@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
-def test_ws_coach_c2c_roundtrip(client: TestClient) -> None:
-    with client.websocket_connect("/ws/coach") as ws:
-        ws.send_json({"type": "start", "mode": "c2c"})
-        started = ws.receive_json()
-        assert started["type"] == "session_started"
-        assert started["state"] == "exercising"
-
-        ws.send_json({"type": "text", "text": "스쿼트 폼 알려줘"})
-        response = ws.receive_json()
-        assert response["type"] == "response"
-        assert response["response_text"] == _RESPONSE_TEXT
-        assert response["audio_b64"] is None  # no TTS in C2C
-        assert response["state"] == "exercising"
-
-        ws.send_json({"type": "end"})
-        ended = ws.receive_json()
-        assert ended["type"] == "session_ended"
-
-
-@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
-def test_ws_coach_s2c_audio_roundtrip(client: TestClient) -> None:
-    # Voice input (s2c) needs an STT adapter; set it just for this test so the
-    # /health adapter assertions elsewhere stay untouched.
-    app.state.stt = MockSTT()
-    audio_b64 = base64.b64encode(b"RIFFfake-wav-bytes").decode("ascii")
-    with client.websocket_connect("/ws/coach") as ws:
-        ws.send_json({"type": "start", "mode": "s2c"})
-        started = ws.receive_json()
-        assert started["type"] == "session_started"
-        assert started["mode"] == "s2c"
-
-        ws.send_json({"type": "audio", "audio_b64": audio_b64, "sample_rate": 16000})
-        response = ws.receive_json()
-        assert response["type"] == "response"
-        assert response["user_text"] == "스쿼트 폼 알려줘"  # from MockSTT
-        assert response["response_text"] == _RESPONSE_TEXT
-        assert response["audio_b64"] is None  # s2c = text output
-
-        ws.send_json({"type": "end"})
-        assert ws.receive_json()["type"] == "session_ended"
-
-
-@pytest.mark.skip(reason="ws_coach removed from router in Phase 1; replaced by ws_voice in Phase 2")
-def test_ws_coach_live_vad_roundtrip(client: TestClient) -> None:
-    # Live S2S streaming (s2c = voice in, text out → needs STT + VAD, not TTS).
-    app.state.stt = MockSTT()
-    app.state.vad = MockVAD()
-    pcm_b64 = base64.b64encode(np.zeros(2048, dtype=np.int16).tobytes()).decode("ascii")
-    with client.websocket_connect("/ws/coach") as ws:
-        ws.send_json({"type": "start", "mode": "s2c"})
-        assert ws.receive_json()["type"] == "session_started"
-
-        ws.send_json({"type": "listen_start"})
-        assert ws.receive_json() == {"type": "vad", "event": "listening"}
-
-        ws.send_json({"type": "audio_chunk", "pcm_b64": pcm_b64, "sample_rate": 16000})
-        assert ws.receive_json() == {"type": "vad", "event": "speech_end"}
-        response = ws.receive_json()
-        assert response["type"] == "response"
-        assert response["user_text"] == "스쿼트 폼 알려줘"  # from MockSTT via VAD utterance
-        assert response["audio_b64"] is None  # s2c = text output
-
-        ws.send_json({"type": "listen_stop"})
-        ws.send_json({"type": "end"})
-        assert ws.receive_json()["type"] == "session_ended"

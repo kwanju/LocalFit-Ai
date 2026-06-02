@@ -58,7 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stt_service = None    # Pipecat STTService bound to FasterWhisperClient (ADR-005)
     app.state.tts = None
     app.state.tts_service = None    # Pipecat TTSService bound to the active client (ADR-006)
-    app.state.vad = None
+    # VAD adapter: Pipecat SileroVADAnalyzer is constructed per ws_voice session
+    # (ADR-007/011); no separate lifespan-loaded VAD adapter is needed.
 
     try:
         config = load_config()
@@ -74,13 +75,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("DB initialization failed: {}", e)
 
     from app.adapters.llm import get_llm_adapter
-    from app.adapters.stt import get_stt_adapter, get_vad_adapter
+    from app.adapters.stt import get_stt_adapter
     from app.adapters.tts import get_tts_adapter
 
     app.state.llm = _load_adapter("LLM", get_llm_adapter, config)
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
-    app.state.vad = _load_adapter("VAD", get_vad_adapter, config)
 
     # Bind the FasterWhisperClient to its Pipecat service (ADR-005/012). The
     # heavy `WhisperModel.load` already happened in get_stt_adapter; the service
