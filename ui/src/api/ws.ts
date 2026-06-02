@@ -1,6 +1,7 @@
-// WebSocket coach client with auto-reconnect (ADR-009: standard browser API +
-// hand-written reconnect). Owns the socket; callers send typed ClientMessages
-// and subscribe to typed ServerMessages. No app/session logic lives here.
+// WebSocket client for the Pipecat /ws/voice endpoint (phase-7).
+// Protocol: JSON text frames via JsonFrameSerializer (no protobuf).
+// Mode is passed as a URL query param (?mode=C2C) so it is fixed per connection.
+// Mode changes cause a disconnect + reconnect with the new mode URL.
 
 import type { ClientMessage, ExerciseMode, ServerMessage, SessionMode } from "./types";
 
@@ -14,11 +15,12 @@ interface CoachSocketHandlers {
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 8000;
 
-function resolveUrl(): string {
+function resolveUrl(mode: SessionMode): string {
   const base = import.meta.env.VITE_WS_BASE;
-  if (base) return `${base}/ws/coach`;
+  const modeParam = `mode=${mode.toUpperCase()}`;
+  if (base) return `${base}/ws/voice?${modeParam}`;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/ws/coach`;
+  return `${proto}//${window.location.host}/ws/voice?${modeParam}`;
 }
 
 export class CoachSocket {
@@ -26,11 +28,13 @@ export class CoachSocket {
   private intentionalClose = false;
   private attempt = 0;
   private reconnectTimer: number | null = null;
+  private _mode: SessionMode = "c2c";
   private readonly outbox: ClientMessage[] = [];
 
   constructor(private readonly handlers: CoachSocketHandlers) {}
 
-  connect(): void {
+  connect(mode?: SessionMode): void {
+    if (mode) this._mode = mode;
     this.intentionalClose = false;
     this.open();
   }
@@ -53,7 +57,7 @@ export class CoachSocket {
 
   private open(): void {
     this.handlers.onStatus(this.attempt === 0 ? "connecting" : "reconnecting");
-    const ws = new WebSocket(resolveUrl());
+    const ws = new WebSocket(resolveUrl(this._mode));
     this.ws = ws;
 
     ws.onopen = () => {
@@ -67,13 +71,12 @@ export class CoachSocket {
       try {
         this.handlers.onMessage(JSON.parse(event.data) as ServerMessage);
       } catch (err) {
-        // A malformed frame must not kill the socket — log and keep listening.
         console.error("Failed to parse server message", err);
       }
     };
 
     ws.onclose = () => {
-      if (this.ws !== ws) return; // superseded by a newer socket (e.g. StrictMode remount)
+      if (this.ws !== ws) return;
       this.ws = null;
       if (this.intentionalClose) return;
       this.scheduleReconnect();
@@ -95,8 +98,6 @@ export class CoachSocket {
     this.ws?.send(JSON.stringify(msg));
   }
 
-  // Queues until the socket is open, then flushes in order. Keeps the UI from
-  // having to guard every call on connection state during a reconnect.
   send(msg: ClientMessage): void {
     if (this.isOpen) {
       this.rawSend(msg);
@@ -107,12 +108,20 @@ export class CoachSocket {
 
   // -- typed convenience senders ------------------------------------------
 
-  start(mode: SessionMode, routineId?: number): void {
-    this.send(
-      routineId === undefined
-        ? { type: "start", mode }
-        : { type: "start", mode, routine_id: routineId },
-    );
+  /** Connect (or reconnect) with a given mode. Closes existing connection first. */
+  start(mode: SessionMode): void {
+    if (this._mode === mode && this.isOpen) return;
+    this._mode = mode;
+    // Close intentionally then reopen — intentionalClose prevents auto-reconnect
+    // but open() resets it.
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ws?.close();
+    this.ws = null;
+    this.attempt = 0;
+    this.open();
   }
 
   sendText(text: string): void {
@@ -120,23 +129,25 @@ export class CoachSocket {
   }
 
   sendAudio(audioB64: string, sampleRate: number): void {
-    this.send({ type: "audio", audio_b64: audioB64, sample_rate: sampleRate });
+    // Full recorded audio (C2S hold/toggle mic modes) — PCM16LE base64.
+    this.send({ type: "audio", data: audioB64, sample_rate: sampleRate });
   }
 
   // -- live S2S (streaming VAD) -------------------------------------------
 
   listenStart(): void {
-    this.send({ type: "listen_start" });
+    // No-op: in Pipecat, audio streaming starts automatically in S2S/S2C modes.
+    // Kept for backward-compat with session.tsx action calls.
   }
 
   sendAudioChunk(pcmB64: string, sampleRate: number): void {
-    // Realtime audio: drop if the socket isn't open rather than buffering a flood.
+    // Realtime audio: drop if not open (flood prevention).
     if (!this.isOpen) return;
-    this.rawSend({ type: "audio_chunk", pcm_b64: pcmB64, sample_rate: sampleRate });
+    this.rawSend({ type: "audio", data: pcmB64, sample_rate: sampleRate });
   }
 
   listenStop(): void {
-    this.send({ type: "listen_stop" });
+    // No-op: backend VAD handles speech detection.
   }
 
   interrupt(): void {
@@ -151,11 +162,11 @@ export class CoachSocket {
     this.send({ type: "resume" });
   }
 
-  startCounting(mode: ExerciseMode, targetDurationSec?: number): void {
+  startCounting(exercise: string, reps: number, mode: ExerciseMode = "metronome", targetDurationSec?: number): void {
     this.send(
       targetDurationSec === undefined
-        ? { type: "start_counting", mode }
-        : { type: "start_counting", mode, target_duration_sec: targetDurationSec },
+        ? { type: "start_counting", exercise, reps, mode }
+        : { type: "start_counting", exercise, reps, mode, target_duration_sec: targetDurationSec },
     );
   }
 

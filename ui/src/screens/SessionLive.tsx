@@ -36,6 +36,14 @@ const EXERCISES: readonly ExerciseOption[] = [
   { name: "플랭크", mode: "timer", target: 30 },
 ];
 
+// Default rep counts used when manually triggering counting from the UI buttons.
+const DEFAULT_REPS: Record<string, number> = {
+  풀업: 10,
+  푸시업: 15,
+  스쿼트: 20,
+  플랭크: 30,  // treated as seconds in timer mode
+};
+
 type MicMode = "hold" | "toggle" | "live";
 
 const MIC_MODES: readonly { mode: MicMode; label: string }[] = [
@@ -60,10 +68,10 @@ export function SessionLive() {
   const isVoiceOutput = VOICE_OUTPUT.has(mode);
 
   // Play the coach's voice when one arrives (voice-output modes only send it).
-  // audio.playWav / actions are stable callbacks, so we key only on lastAudio.
+  // Phase-7: audio comes as PCM16LE (playPcm adds WAV header).
   useEffect(() => {
     if (lastAudio) {
-      void audio.playWav(lastAudio.b64);
+      void audio.playPcm(lastAudio.data, lastAudio.sampleRate);
       actions.consumeAudio(lastAudio.seq);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,7 +219,14 @@ export function SessionLive() {
         <CountingControls
           active={counting.active}
           disabled={disabled}
-          onStart={(opt) => actions.startCounting(opt.mode, opt.target)}
+          onStart={(opt) =>
+            actions.startCounting(
+              opt.name,
+              DEFAULT_REPS[opt.name] ?? 10,
+              opt.mode,
+              opt.target,
+            )
+          }
           onStop={() => actions.stopCounting()}
         />
       </section>

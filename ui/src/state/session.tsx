@@ -1,6 +1,6 @@
-// Session store: a Context + useReducer (ADR-009) that owns the CoachSocket and
-// translates the WebSocket protocol into UI state. Components read state via
-// useSession() and act via the returned actions — they never touch the socket.
+// Session store: a Context + useReducer that owns the CoachSocket and
+// translates the Pipecat JSON frame protocol into UI state (phase-7).
+// Components read state via useSession() and act via the returned actions.
 
 import {
   createContext,
@@ -12,12 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { CoachSocket, type SocketStatus } from "@/api/ws";
-import type {
-  ExerciseMode,
-  ServerMessage,
-  SessionMode,
-  SessionState as ServerState,
-} from "@/api/types";
+import type { ExerciseMode, ServerMessage, SessionMode } from "@/api/types";
 
 export type ChatRole = "user" | "coach" | "system";
 
@@ -40,17 +35,18 @@ export interface CountingState {
 export interface SessionStore {
   status: SocketStatus;
   mode: SessionMode;
-  serverState: ServerState | null;
   sessionId: number | null;
   started: boolean;
   messages: ChatEntry[];
   counting: CountingState;
   error: string | null;
   // Bumped each time the coach returns audio; SessionLive plays it then clears.
-  lastAudio: { seq: number; b64: string } | null;
+  lastAudio: { seq: number; data: string; sampleRate: number } | null;
   // Live S2S: true while the mic is actively listening (false once an utterance
   // ends and we're transcribing/responding).
   liveListening: boolean;
+  // Legacy field for backward compat with SessionLive header display.
+  serverState: string | null;
 }
 
 const INITIAL_COUNTING: CountingState = {
@@ -64,7 +60,6 @@ const INITIAL_COUNTING: CountingState = {
 const initialStore: SessionStore = {
   status: "connecting",
   mode: "c2c",
-  serverState: null,
   sessionId: null,
   started: false,
   messages: [],
@@ -72,6 +67,7 @@ const initialStore: SessionStore = {
   error: null,
   lastAudio: null,
   liveListening: false,
+  serverState: null,
 };
 
 type Action =
@@ -102,37 +98,45 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
         started: true,
         sessionId: msg.session_id,
         mode: msg.mode,
-        serverState: msg.state,
         error: null,
+        serverState: "active",
         messages: pushEntry(store.messages, { role: "system", text: "세션을 시작했어요." }),
       };
 
-    case "response": {
-      let messages = store.messages;
-      const last = messages[messages.length - 1];
-      if (last && last.role === "user" && last.pending) {
-        // Ack the optimistic echo of typed text.
-        messages = messages.map((m) => (m.id === last.id ? { ...m, pending: false } : m));
-      } else if (msg.user_text) {
-        // Voice input has no optimistic echo — add the transcript now.
-        messages = pushEntry(messages, { role: "user", text: msg.user_text });
-      }
-      if (msg.response_text) {
-        messages = pushEntry(messages, {
-          role: "coach",
-          text: msg.response_text,
-          safety: msg.safety_triggered,
-        });
-      }
+    case "text": {
+      const baseMessages = store.messages.some((m) => m.role === "user" && m.pending)
+        ? store.messages.map((m) => (m.role === "user" && m.pending ? { ...m, pending: false } : m))
+        : store.messages;
       return {
         ...store,
-        messages,
-        serverState: msg.state,
-        lastAudio: msg.audio_b64
-          ? { seq: (store.lastAudio?.seq ?? 0) + 1, b64: msg.audio_b64 }
-          : store.lastAudio,
+        messages: pushEntry(baseMessages, {
+          role: "coach",
+          text: msg.text,
+          safety: msg.safety ?? false,
+        }),
       };
     }
+
+    case "audio":
+      return {
+        ...store,
+        lastAudio: {
+          seq: (store.lastAudio?.seq ?? 0) + 1,
+          data: msg.data,
+          sampleRate: msg.sample_rate,
+        },
+      };
+
+    case "transcription":
+      // Only show finalised transcriptions as user messages.
+      if (!msg.final) return store;
+      return {
+        ...store,
+        messages: pushEntry(store.messages, { role: "user", text: msg.text }),
+      };
+
+    case "interrupt":
+      return store;
 
     case "beat":
       return {
@@ -146,8 +150,8 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
         },
       };
 
-    case "state":
-      return { ...store, serverState: msg.state };
+    case "vad":
+      return { ...store, liveListening: msg.event !== "speech_end" };
 
     case "error":
       return {
@@ -160,14 +164,10 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
       return {
         ...store,
         started: false,
-        serverState: msg.state ?? store.serverState,
+        serverState: null,
         counting: INITIAL_COUNTING,
         messages: pushEntry(store.messages, { role: "system", text: "세션을 종료했어요." }),
       };
-
-    case "vad":
-      // Live S2S feedback: "speech_end" means we're transcribing/responding now.
-      return { ...store, liveListening: msg.event !== "speech_end" };
   }
 }
 
@@ -198,7 +198,7 @@ function reducer(store: SessionStore, action: Action): SessionStore {
 export interface SessionActions {
   setMode: (mode: SessionMode) => void;
   startSession: (routineId?: number) => void;
-  switchMode: (mode: SessionMode, routineId?: number) => void;
+  switchMode: (mode: SessionMode) => void;
   sendText: (text: string) => void;
   sendAudio: (audioB64: string, sampleRate: number) => void;
   listenStart: () => void;
@@ -207,7 +207,7 @@ export interface SessionActions {
   interrupt: () => void;
   pause: () => void;
   resume: () => void;
-  startCounting: (mode: ExerciseMode, targetDurationSec?: number) => void;
+  startCounting: (exercise: string, reps: number, mode?: ExerciseMode, targetDurationSec?: number) => void;
   stopCounting: () => void;
   endSession: () => void;
   consumeAudio: (seq: number) => void;
@@ -241,11 +241,10 @@ export function SessionProvider({
 
   useEffect(() => {
     const socket = socketRef.current;
-    socket?.connect();
+    socket?.connect(initialMode ?? "c2c");
     return () => socket?.close();
   }, []);
 
-  // Latest mode without re-creating actions on every mode change.
   const modeRef = useRef(store.mode);
   modeRef.current = store.mode;
 
@@ -253,18 +252,24 @@ export function SessionProvider({
     const socket = socketRef.current as CoachSocket;
     return {
       setMode: (mode) => dispatch({ kind: "set_mode", mode }),
-      startSession: (routineId) => socket.start(modeRef.current, routineId),
-      switchMode: (mode, routineId) => {
-        // Backend mode is fixed at start; switching restarts the session.
+
+      startSession: () => {
+        // Phase-7: session begins when we connect.  Re-connect if not open.
+        socket.start(modeRef.current);
+      },
+
+      switchMode: (mode) => {
         socket.end();
         dispatch({ kind: "set_mode", mode });
         modeRef.current = mode;
-        socket.start(mode, routineId);
+        socket.start(mode);
       },
+
       sendText: (text) => {
         dispatch({ kind: "user_text", text });
         socket.sendText(text);
       },
+
       sendAudio: (audioB64, sampleRate) => socket.sendAudio(audioB64, sampleRate),
       listenStart: () => socket.listenStart(),
       sendAudioChunk: (pcmB64, sampleRate) => socket.sendAudioChunk(pcmB64, sampleRate),
@@ -272,14 +277,17 @@ export function SessionProvider({
       interrupt: () => socket.interrupt(),
       pause: () => socket.pause(),
       resume: () => socket.resume(),
-      startCounting: (mode, targetDurationSec) => {
+
+      startCounting: (exercise, reps, mode = "metronome", targetDurationSec) => {
         dispatch({ kind: "counting_request", mode });
-        socket.startCounting(mode, targetDurationSec);
+        socket.startCounting(exercise, reps, mode, targetDurationSec);
       },
+
       stopCounting: () => {
         socket.stopCounting();
         dispatch({ kind: "counting_stopped" });
       },
+
       endSession: () => socket.end(),
       consumeAudio: (seq) => dispatch({ kind: "audio_consumed", seq }),
     };

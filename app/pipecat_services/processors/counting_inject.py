@@ -15,7 +15,7 @@ text (option B from phase-6 spec: Pipecat queue serialises them).
 from __future__ import annotations
 
 from loguru import logger
-from pipecat.frames.frames import Frame, TextFrame
+from pipecat.frames.frames import Frame, OutputTransportMessageFrame, TextFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.core.counting import BeatEvent, CountingEngine
@@ -33,6 +33,15 @@ class CountingInjectProcessor(FrameProcessor):
         logger.debug("CountingInjectProcessor: attached to engine {}", id(engine))
 
     async def _inject_beat(self, event: BeatEvent) -> None:
+        # Always send beat metadata to UI (drives CountingDisplay).
+        beat_msg = OutputTransportMessageFrame(message={
+            "type": "beat",
+            "rep": event.rep,
+            "phase": event.phase,
+            "elapsed_sec": round(event.elapsed_sec, 2),
+        })
+        await self.push_frame(beat_msg, FrameDirection.DOWNSTREAM)
+
         if event.cue:
             logger.debug("CountingInjectProcessor: beat cue='{}'", event.cue)
             await self.push_frame(TextFrame(text=event.cue), FrameDirection.DOWNSTREAM)

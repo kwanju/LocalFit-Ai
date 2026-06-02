@@ -102,6 +102,31 @@ function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   return new Uint8Array(buffer);
 }
 
+// Add WAV header to raw PCM16LE bytes from Pipecat TTS output (phase-7).
+function pcm16ToWav(pcmBytes: Uint8Array, sampleRate: number, channels: number): Uint8Array {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const ws = (offset: number, s: string) =>
+    s.split("").forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+  ws(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  ws(8, "WAVE");
+  ws(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  ws(36, "data");
+  view.setUint32(40, pcmBytes.length, true);
+  const wav = new Uint8Array(44 + pcmBytes.length);
+  wav.set(new Uint8Array(header));
+  wav.set(pcmBytes, 44);
+  return wav;
+}
+
 export interface RecordedAudio {
   audioB64: string;
   sampleRate: number;
@@ -113,6 +138,7 @@ interface UseAudio {
   streaming: boolean;
   micError: string | null;
   playWav: (b64: string) => Promise<void>;
+  playPcm: (pcmB64: string, sampleRate: number) => Promise<void>;
   stopPlayback: () => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<RecordedAudio | null>;
@@ -174,6 +200,16 @@ export function useAudio(): UseAudio {
       }
     },
     [stopPlayback],
+  );
+
+  // Play raw PCM16LE audio from Pipecat TTS (phase-7: adds WAV header).
+  const playPcm = useCallback(
+    async (pcmB64: string, sampleRate: number) => {
+      const pcmBytes = base64ToBytes(pcmB64);
+      const wav = pcm16ToWav(pcmBytes, sampleRate, 1);
+      await playWav(bytesToBase64(wav));
+    },
+    [playWav],
   );
 
   const startRecording = useCallback(async () => {
@@ -310,6 +346,7 @@ export function useAudio(): UseAudio {
     streaming,
     micError,
     playWav,
+    playPcm,
     stopPlayback,
     startRecording,
     stopRecording,

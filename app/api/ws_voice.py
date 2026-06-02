@@ -9,16 +9,18 @@ runs once per session when ``config.coach.proactive_opener`` is true.
 Phase 6: CountingManager + CountingInjectProcessor wired; WorkoutSession
 created on connect; SetLog recorded on counting complete; auto follow-up LLM
 call injected via worker.queue_frame (ADR-014).
+Phase 7: JsonFrameSerializer replaces ProtobufFrameSerializer so the browser
+needs no protobuf library.  UIControlProcessor handles UI control messages.
+Session lifecycle events (session_started / session_ended / vad) are sent via
+OutputTransportMessageFrame.
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
-from pipecat.frames.frames import TextFrame
+from pipecat.frames.frames import OutputTransportMessageFrame, TextFrame
 from pipecat.pipeline.worker import PipelineWorker
-from pipecat.serializers.protobuf import ProtobufFrameSerializer
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import AppConfig
@@ -28,16 +30,19 @@ from app.db.engine import create_db_session
 from app.db.models import SessionMode as DBSessionMode, SessionStatus
 from app.db.repositories import ExerciseRepository, SessionRepository, SetLogRepository
 from app.pipecat_services.counting_manager import CountingManager
+from app.pipecat_services.json_frame_serializer import JsonFrameSerializer
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
+from app.pipecat_services.processors.ui_control import UIControlProcessor
 from app.prompts.coaching import (
     COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
     PROACTIVE_OPENER_USER_MESSAGE,
 )
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
 router = APIRouter(tags=["ws"])
 
@@ -76,7 +81,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     transport = FastAPIWebsocketTransport(
         websocket,
         FastAPIWebsocketParams(
-            serializer=ProtobufFrameSerializer(),
+            serializer=JsonFrameSerializer(),
             add_wav_header=False,
             audio_in_enabled=use_stt,
             audio_in_sample_rate=audio_in_sr,
@@ -103,6 +108,9 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     confirm = ConfirmRuleProcessor(slot)
     dispatcher = ActionDispatcherProcessor(slot, counting_manager=counting_manager)
 
+    # Phase-7: UIControlProcessor handles control messages from the browser.
+    ui_control = UIControlProcessor(counting_manager=counting_manager)
+
     pipeline = build_pipeline(
         transport,
         session_mode,
@@ -115,6 +123,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         action_dispatcher=dispatcher,
         confirm_slot=slot,
         counting_inject=counting_inject,
+        ui_control=ui_control,
     )
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
@@ -176,6 +185,14 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
                     logger.info("WorkoutSession created: id={}", ws_session.id)
             except Exception as e:  # noqa: BLE001
                 logger.error("WorkoutSession create failed: {}", e)
+
+        # Phase-7: notify the UI that the session has started.
+        session_started_msg = OutputTransportMessageFrame(message={
+            "type": "session_started",
+            "session_id": _db_session_id[0] or 0,
+            "mode": session_mode.value.lower(),
+        })
+        await worker.queue_frame(session_started_msg)
 
         if proactive_enabled:
             logger.info("ws_voice: injecting proactive opener (ADR-013 §0)")

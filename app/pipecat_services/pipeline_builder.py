@@ -38,6 +38,7 @@ from app.pipecat_services.mock_tts_service import MockTTSService
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
+from app.pipecat_services.processors.ui_control import UIControlProcessor
 
 
 class SessionMode(StrEnum):
@@ -60,6 +61,7 @@ def build_pipeline(
     action_dispatcher: FrameProcessor | None = None,
     confirm_slot: ConfirmSlot | None = None,
     counting_inject: FrameProcessor | None = None,
+    ui_control: FrameProcessor | None = None,
 ) -> Pipeline:
     """Build a mode-specific Pipecat pipeline.
 
@@ -78,6 +80,8 @@ def build_pipeline(
             when ws_voice needs access to inspect the pending proposal.
         counting_inject: Phase-6 ``CountingInjectProcessor`` — inserted between
             ActionDispatcher and SentenceAggregator. Omit for non-counting tests.
+        ui_control: Phase-7 ``UIControlProcessor`` — inserted right after
+            transport.input() to intercept UI control messages before the LLM.
     """
     if isinstance(mode, str):
         mode = SessionMode(mode.upper())
@@ -92,6 +96,10 @@ def build_pipeline(
     dispatcher = action_dispatcher or ActionDispatcherProcessor(slot)
 
     processors: list[FrameProcessor] = [transport.input()]
+
+    # UI control messages intercepted before any STT/LLM processing (phase-7).
+    if ui_control is not None:
+        processors.append(ui_control)
 
     use_stt = mode in (SessionMode.s2s, SessionMode.s2c)
     use_tts = mode in (SessionMode.s2s, SessionMode.c2s)

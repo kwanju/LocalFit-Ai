@@ -1,72 +1,65 @@
-// Protocol types mirrored from the FastAPI backend. Keep in sync with
-// app/core/orchestrator.py, app/core/state_machine.py, app/api/ws_coach.py.
+// Protocol types for the Pipecat JSON frame WebSocket transport (phase-7).
+// Replaces v1 ws_coach.py custom protocol with JsonFrameSerializer messages.
 
 export type SessionMode = "s2s" | "c2s" | "c2c" | "s2c";
 export type ExerciseMode = "metronome" | "timer";
 
-export type IntentType =
-  | "body_state"
-  | "schedule"
-  | "feedback"
-  | "goal"
-  | "injury"
-  | "general";
-
 export type DangerLevel = "low" | "moderate" | "high" | "emergency";
-
-export type SessionState =
-  | "idle"
-  | "condition_check"
-  | "warmup"
-  | "exercising"
-  | "rest"
-  | "cooldown"
-  | "completed"
-  | "paused"
-  | "aborted"
-  | "injury_alert"
-  | "safety_check"
-  | "emergency_stopped"
-  | "recovered";
 
 export type FitnessLevel = "beginner" | "intermediate" | "advanced";
 
 // -- WebSocket: client → server ------------------------------------------
+// Sent as JSON text frames.
 
 export type ClientMessage =
-  | { type: "start"; mode: SessionMode; routine_id?: number }
   | { type: "text"; text: string }
-  | { type: "audio"; audio_b64: string; sample_rate: number }
-  | { type: "listen_start" }
-  | { type: "audio_chunk"; pcm_b64: string; sample_rate: number }
-  | { type: "listen_stop" }
+  // PCM16LE audio chunk (streaming S2S/S2C) — base64 encoded
+  | { type: "audio"; data: string; sample_rate: number }
   | { type: "interrupt" }
+  // Control messages — routed to UIControlProcessor via InputTransportMessageFrame
+  | { type: "start_counting"; exercise: string; reps: number; mode?: ExerciseMode; target_duration_sec?: number }
+  | { type: "stop_counting" }
   | { type: "pause" }
   | { type: "resume" }
-  | { type: "start_counting"; mode: ExerciseMode; target_duration_sec?: number }
-  | { type: "stop_counting" }
   | { type: "end" };
 
 // -- WebSocket: server → client ------------------------------------------
+// All messages are JSON text frames from JsonFrameSerializer.
 
 export interface SessionStartedMessage {
   type: "session_started";
   session_id: number;
   mode: SessionMode;
-  state: SessionState;
 }
 
-export interface ResponseMessage {
-  type: "response";
-  user_text: string;
-  response_text: string;
-  state: SessionState;
-  intent: IntentType | null;
-  safety_triggered: boolean;
-  safety_level: DangerLevel | null;
-  audio_b64: string | null;
+// Coach text response (TextFrame / SafetyResponseFrame)
+export interface TextMessage {
+  type: "text";
+  text: string;
+  safety?: boolean;
+  safety_level?: DangerLevel | null;
 }
 
+// TTS audio (OutputAudioRawFrame) — PCM16LE base64
+export interface AudioMessage {
+  type: "audio";
+  data: string;
+  sample_rate: number;
+}
+
+// User speech transcription (TranscriptionFrame)
+export interface TranscriptionMessage {
+  type: "transcription";
+  text: string;
+  final: boolean;
+}
+
+// Interruption (InterruptionFrame)
+export interface InterruptMessage {
+  type: "interrupt";
+}
+
+// Counting beat (OutputTransportMessageFrame from CountingInjectProcessor)
 export interface BeatMessage {
   type: "beat";
   rep: number;
@@ -74,9 +67,14 @@ export interface BeatMessage {
   elapsed_sec: number;
 }
 
-export interface StateMessage {
-  type: "state";
-  state: SessionState;
+// VAD state (OutputTransportMessageFrame from ws_voice)
+export interface VadMessage {
+  type: "vad";
+  event: "listening" | "speech_start" | "speech_end";
+}
+
+export interface SessionEndedMessage {
+  type: "session_ended";
 }
 
 export interface ErrorMessage {
@@ -84,24 +82,16 @@ export interface ErrorMessage {
   message: string;
 }
 
-export interface SessionEndedMessage {
-  type: "session_ended";
-  state: SessionState | null;
-}
-
-export interface VadMessage {
-  type: "vad";
-  event: "listening" | "speech_start" | "speech_end";
-}
-
 export type ServerMessage =
   | SessionStartedMessage
-  | ResponseMessage
+  | TextMessage
+  | AudioMessage
+  | TranscriptionMessage
+  | InterruptMessage
   | BeatMessage
-  | StateMessage
-  | ErrorMessage
+  | VadMessage
   | SessionEndedMessage
-  | VadMessage;
+  | ErrorMessage;
 
 // -- REST -----------------------------------------------------------------
 
