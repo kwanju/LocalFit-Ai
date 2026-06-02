@@ -41,7 +41,9 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         ),
     )
 
-    pipeline = build_pipeline(transport, session_mode)
+    # Use the lifespan-loaded TTS service (Qwen3/Melo) if present; else mock falls back.
+    tts_service = getattr(websocket.app.state, "tts_service", None)
+    pipeline = build_pipeline(transport, session_mode, tts_service=tts_service)
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
 

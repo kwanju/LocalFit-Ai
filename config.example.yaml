@@ -16,17 +16,21 @@ stt:
   timeout_sec: 30.0                 # 전사 최대 허용 시간(초)
 
 tts:
-  active: "qwen3"                   # ADR-006: Qwen3-TTS 단일
+  active: "melo"                    # ADR-006: "qwen3" | "melo" — melo 기본 (Qwen3는 voice-clone용)
   qwen3:
     model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    ref_audio_path: "data/ref_voice.wav"   # 참조 음성 (3초 이상 한국어 WAV)
+    ref_audio_path: "data/ref_voice.wav"   # 참조 음성 (6초 이상 한국어 WAV) — voice clone
     ref_text: ""                    # 참조 음성 전사 텍스트 (정확도 향상용)
-    attn_implementation: "sdpa"     # SDPA 어텐션 (ADR-006: flash-attn 없이 ~97ms)
+    attn_implementation: "sdpa"     # sdpa 우선 시도, 미지원 시 자동 eager 폴백 (ADR-006)
     device_map: "cuda:0"
-    streaming: "true"               # sentence-streaming (Phase 3 구현)
+    language: "Korean"              # qwen_tts 언어 코드
     timeout_sec: "60.0"
-    voice: "default"
+  melo:
+    language: "KR"                  # MeloTTS 언어 코드 (한국어)
+    device: "cuda:0"
+    speaker_id: "0"                 # MeloTTS preset speaker (한국어는 단일 화자)
     speed: "1.0"
+    timeout_sec: "30.0"
 
 vad:
   model: "silero_vad"               # silero-vad via pipecat-ai[silero] (ADR-007)

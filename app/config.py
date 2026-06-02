@@ -22,8 +22,9 @@ class STTConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    active: str
+    active: str                       # "qwen3" | "melo"  (ADR-006)
     qwen3: dict[str, str]
+    melo: dict[str, str] = {}         # ADR-006 (2026-06-02 개정): MeloTTS 병행 어댑터
 
 
 class VADConfig(BaseModel):

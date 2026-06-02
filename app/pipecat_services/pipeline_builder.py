@@ -13,6 +13,7 @@ from enum import StrEnum
 
 from loguru import logger
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
 
@@ -43,7 +44,8 @@ def build_pipeline(
         mode: One of S2S / C2S / C2C / S2C.
         llm_processor: Override default MockLLMProcessor (for future phases).
         stt_service: Override default MockSTTService (for future phases).
-        tts_service: Override default MockTTSService (for future phases).
+        tts_service: Override default MockTTSService.  Pass the lifespan-loaded
+            Qwen3/Melo service for real audio output (ADR-006).
 
     Returns:
         A configured Pipeline (not yet running).
@@ -66,6 +68,9 @@ def build_pipeline(
     processors.append(llm)
 
     if use_tts:
+        # Sentence-batch TTS (ADR-006): SentenceAggregator buffers streaming
+        # TextFrames into sentence-sized chunks before they hit the TTS service.
+        processors.append(SentenceAggregator())
         processors.append(tts)
 
     processors.append(transport.output())

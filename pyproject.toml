@@ -26,6 +26,15 @@ gpu = [
     "transformers>=4.45",
     "librosa>=0.10",
     "soundfile>=0.12",
+    "qwen-tts>=0.1.1",
+    # MeloTTS — no PyPI release, install from upstream (MIT) — ADR-006 (2026-06-02 개정).
+    # Distribution name is `melotts`; import path is `from melo.api import TTS`.
+    "melotts @ git+https://github.com/myshell-ai/MeloTTS.git",
+    # Korean G2P backend: g2pkk on Windows defaults to `eunjeon` which needs MSVC
+    # build tools.  python-mecab-ko ships a prebuilt Windows wheel; melo_client
+    # monkey-patches g2pkk to use it instead.
+    "python-mecab-ko>=1.3.7",
+    "python-mecab-ko-dic>=2.1.1",
 ]
 dev = [
     "pytest>=8.0",
@@ -41,6 +50,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.metadata]
+# Required for MeloTTS git+https direct reference in [project.optional-dependencies]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100
@@ -67,3 +80,15 @@ torchaudio = { index = "pytorch-cu128" }
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+# MeloTTS pins transformers==4.27.4 which conflicts with qwen-tts and our own
+# transformers>=4.45 requirement (ADR-006 2026-06-02 개정).  Forcing the newer
+# version here keeps a single environment; MeloTTS only uses transformers for
+# the BERT-based Korean G2P (AutoTokenizer), which is stable across 4.27→4.45.
+[tool.uv]
+override-dependencies = [
+    "transformers>=4.45",
+    "librosa>=0.10",
+    "numpy>=1.26",
+    "loguru>=0.7.3",
+]

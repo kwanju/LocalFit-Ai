@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.llm = None
     app.state.stt = None
     app.state.tts = None
+    app.state.tts_service = None    # Pipecat TTSService bound to the active client (ADR-006)
     app.state.vad = None
 
     try:
@@ -79,6 +80,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
     app.state.vad = _load_adapter("VAD", get_vad_adapter, config)
+
+    # Bind the active TTS client to its Pipecat service so ws_voice can mount
+    # the same instance per connection (model load happens once at lifespan).
+    if app.state.tts is not None:
+        try:
+            from app.adapters.tts.qwen3_client import Qwen3TTSClient
+
+            if isinstance(app.state.tts, Qwen3TTSClient):
+                from app.pipecat_services.qwen3_tts_service import Qwen3TTSService
+
+                app.state.tts_service = Qwen3TTSService(app.state.tts)
+            else:
+                from app.adapters.tts.melo_client import MeloTTSClient
+                from app.pipecat_services.melo_tts_service import MeloTTSService
+
+                if isinstance(app.state.tts, MeloTTSClient):
+                    app.state.tts_service = MeloTTSService(app.state.tts)
+            logger.info("TTS pipecat service bound: {}", type(app.state.tts_service).__name__)
+        except Exception as e:  # noqa: BLE001 — adapter present but Pipecat bind failed
+            logger.error("TTS pipecat service bind failed: {}", e)
 
     if app.state.llm is not None:
         await app.state.llm.warmup()  # type: ignore[attr-defined]
