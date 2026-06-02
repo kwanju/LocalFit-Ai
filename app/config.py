@@ -19,6 +19,9 @@ class STTConfig(BaseModel):
     compute_type: str
     language: str
     timeout_sec: float = 30.0
+    beam_size: int = 1
+    vad_filter: bool = True
+    resample_to: int = 16000          # ADR-005: 입력 샘플레이트 != 16000이면 강제 리샘플
 
 
 class TTSConfig(BaseModel):
@@ -29,8 +32,10 @@ class TTSConfig(BaseModel):
 
 class VADConfig(BaseModel):
     model: str
-    threshold: float
-    min_silence_ms: int
+    threshold: float                  # ADR-007: silero confidence threshold (0..1)
+    min_silence_ms: int               # 발화 종료 판정 최소 침묵 구간(ms) → Pipecat stop_secs
+    sample_rate: int = 16000          # silero VAD 8k/16k만 지원, 우리는 16k 고정
+    use_smart_turn: bool = False      # ADR-007: P1 검증 후 활성
 
 
 class DBConfig(BaseModel):

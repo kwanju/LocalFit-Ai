@@ -6,14 +6,18 @@ ADR-009 §4-모드 분리:
   C2C : STT off + TTS off
   S2C : STT on  + TTS off
 
-Phase 2: all services are mocks; replaced by real services in Phase 3-5.
+VAD (ADR-007/011): SileroVADAnalyzer drives a VADProcessor inserted between the
+transport input and STT for S2S/S2C. Smart Turn is structurally allowed but
+gated by `config.vad.use_smart_turn` (default false, P1).
 """
 
 from enum import StrEnum
 
 from loguru import logger
+from pipecat.audio.vad.vad_analyzer import VADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.sentence import SentenceAggregator
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
 
@@ -36,6 +40,7 @@ def build_pipeline(
     llm_processor: FrameProcessor | None = None,
     stt_service: FrameProcessor | None = None,
     tts_service: FrameProcessor | None = None,
+    vad_analyzer: VADAnalyzer | None = None,
 ) -> Pipeline:
     """Build a mode-specific Pipecat pipeline.
 
@@ -43,12 +48,13 @@ def build_pipeline(
         transport: The FastAPIWebsocketTransport to use for I/O.
         mode: One of S2S / C2S / C2C / S2C.
         llm_processor: Override default MockLLMProcessor (for future phases).
-        stt_service: Override default MockSTTService (for future phases).
-        tts_service: Override default MockTTSService.  Pass the lifespan-loaded
+        stt_service: Override default MockSTTService. Pass `LocalFitWhisperSTTService`
+            from lifespan to get real STT (ADR-005).
+        tts_service: Override default MockTTSService. Pass the lifespan-loaded
             Qwen3/Melo service for real audio output (ADR-006).
-
-    Returns:
-        A configured Pipeline (not yet running).
+        vad_analyzer: Optional Pipecat VADAnalyzer (e.g. SileroVADAnalyzer) — when
+            provided and STT is active, a VADProcessor is inserted before the STT
+            service so VAD events drive `SegmentedSTTService.run_stt`.
     """
     if isinstance(mode, str):
         mode = SessionMode(mode.upper())
@@ -63,6 +69,11 @@ def build_pipeline(
     use_tts = mode in (SessionMode.s2s, SessionMode.c2s)
 
     if use_stt:
+        # SileroVADAnalyzer (ADR-007) emits VADUserStarted/Stopped frames that
+        # SegmentedSTTService consumes to bracket transcription. Without it, the
+        # STT service has no signal to flush its audio buffer.
+        if vad_analyzer is not None:
+            processors.append(VADProcessor(vad_analyzer=vad_analyzer))
         processors.append(stt)
 
     processors.append(llm)
@@ -75,5 +86,10 @@ def build_pipeline(
 
     processors.append(transport.output())
 
-    logger.info("Pipeline assembled: mode={} processors={}", mode.value, len(processors))
+    logger.info(
+        "Pipeline assembled: mode={} processors={} vad={}",
+        mode.value,
+        len(processors),
+        vad_analyzer is not None,
+    )
     return Pipeline(processors)

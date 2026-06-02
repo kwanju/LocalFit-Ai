@@ -2,19 +2,40 @@
 
 Query param: ?mode=S2S|C2S|C2C|S2C  (default: C2C)
 
-Phase 2: mock services only.  Real STT/TTS/LLM wired in Phases 3-5.
+Phase 4: real STT (faster-whisper) + silero VAD wired in for S2S/S2C.
+Smart Turn is gated by `config.vad.use_smart_turn` (default false, P1).
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
+from app.config import AppConfig
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 
 router = APIRouter(tags=["ws"])
+
+
+def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
+    """Construct SileroVADAnalyzer from `config.vad` (ADR-007)."""
+    vad_cfg = config.vad
+    params = VADParams(
+        confidence=vad_cfg.threshold,
+        stop_secs=vad_cfg.min_silence_ms / 1000.0,
+    )
+    logger.info(
+        "VAD analyzer: silero confidence={} stop_secs={:.2f} sr={} smart_turn={}",
+        vad_cfg.threshold,
+        params.stop_secs,
+        vad_cfg.sample_rate,
+        vad_cfg.use_smart_turn,
+    )
+    return SileroVADAnalyzer(sample_rate=vad_cfg.sample_rate, params=params)
 
 
 @router.websocket("/ws/voice")
@@ -33,17 +54,33 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         await websocket.close()
         return
 
+    config: AppConfig | None = getattr(websocket.app.state, "config", None)
+    use_stt = session_mode in (SessionMode.s2s, SessionMode.s2c)
+    audio_in_sr = config.vad.sample_rate if (config and use_stt) else 16000
+
     transport = FastAPIWebsocketTransport(
         websocket,
         FastAPIWebsocketParams(
             serializer=ProtobufFrameSerializer(),
             add_wav_header=False,
+            audio_in_enabled=use_stt,
+            audio_in_sample_rate=audio_in_sr,
+            audio_out_enabled=session_mode in (SessionMode.s2s, SessionMode.c2s),
         ),
     )
 
-    # Use the lifespan-loaded TTS service (Qwen3/Melo) if present; else mock falls back.
+    # Real services come from lifespan; absent ones fall back to mocks via build_pipeline.
     tts_service = getattr(websocket.app.state, "tts_service", None)
-    pipeline = build_pipeline(transport, session_mode, tts_service=tts_service)
+    stt_service = getattr(websocket.app.state, "stt_service", None) if use_stt else None
+    vad_analyzer = _build_vad_analyzer(config) if (config and use_stt) else None
+
+    pipeline = build_pipeline(
+        transport,
+        session_mode,
+        tts_service=tts_service,
+        stt_service=stt_service,
+        vad_analyzer=vad_analyzer,
+    )
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
 

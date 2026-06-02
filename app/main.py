@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.config = None
     app.state.llm = None
     app.state.stt = None
+    app.state.stt_service = None    # Pipecat STTService bound to FasterWhisperClient (ADR-005)
     app.state.tts = None
     app.state.tts_service = None    # Pipecat TTSService bound to the active client (ADR-006)
     app.state.vad = None
@@ -80,6 +81,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
     app.state.vad = _load_adapter("VAD", get_vad_adapter, config)
+
+    # Bind the FasterWhisperClient to its Pipecat service (ADR-005/012). The
+    # heavy `WhisperModel.load` already happened in get_stt_adapter; the service
+    # wraps it so ws_voice can mount the same instance per connection.
+    if app.state.stt is not None:
+        try:
+            from app.adapters.stt.faster_whisper_client import FasterWhisperClient
+            from app.pipecat_services.whisper_service import LocalFitWhisperSTTService
+
+            if isinstance(app.state.stt, FasterWhisperClient):
+                app.state.stt_service = LocalFitWhisperSTTService(app.state.stt)
+                logger.info("STT pipecat service bound: LocalFitWhisperSTTService")
+        except Exception as e:  # noqa: BLE001 — adapter present but Pipecat bind failed
+            logger.error("STT pipecat service bind failed: {}", e)
 
     # Bind the active TTS client to its Pipecat service so ws_voice can mount
     # the same instance per connection (model load happens once at lifespan).
