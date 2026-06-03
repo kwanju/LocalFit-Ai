@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from loguru import logger
 from sqlmodel import select
@@ -71,6 +71,19 @@ class SessionRepository:
         )
         return list(result.all())
 
+    async def get_range(self, from_: date, to: date) -> list[WorkoutSession]:
+        """Return sessions whose started_at falls within [from_, to] (inclusive). (ADR-020)"""
+        from_dt = datetime(from_.year, from_.month, from_.day, tzinfo=UTC)
+        to_next = to + timedelta(days=1)
+        to_dt = datetime(to_next.year, to_next.month, to_next.day, tzinfo=UTC)
+        result = await self._session.exec(
+            select(WorkoutSession)
+            .where(WorkoutSession.started_at >= from_dt)
+            .where(WorkoutSession.started_at < to_dt)
+            .order_by(WorkoutSession.started_at)
+        )
+        return list(result.all())
+
 
 class SetLogRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -104,6 +117,15 @@ class SetLogRepository:
         )
         return list(result.all())
 
+    async def get_by_sessions(self, session_ids: list[int]) -> list[SetLog]:
+        """Batch-fetch set logs for multiple sessions (ADR-020 §캘린더 API)."""
+        if not session_ids:
+            return []
+        result = await self._session.exec(
+            select(SetLog).where(SetLog.session_id.in_(session_ids))  # type: ignore[union-attr]
+        )
+        return list(result.all())
+
 
 class ConditionRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -130,6 +152,15 @@ class ConditionRepository:
     async def get_by_session(self, session_id: int) -> list[ConditionLog]:
         result = await self._session.exec(
             select(ConditionLog).where(ConditionLog.session_id == session_id)
+        )
+        return list(result.all())
+
+    async def get_by_sessions(self, session_ids: list[int]) -> list[ConditionLog]:
+        """Batch-fetch condition logs for multiple sessions (ADR-020 §캘린더 API)."""
+        if not session_ids:
+            return []
+        result = await self._session.exec(
+            select(ConditionLog).where(ConditionLog.session_id.in_(session_ids))  # type: ignore[union-attr]
         )
         return list(result.all())
 
@@ -170,6 +201,10 @@ class ExerciseRepository:
     async def get_by_name(self, name: str) -> Exercise | None:
         result = await self._session.exec(select(Exercise).where(Exercise.name == name))
         return result.first()
+
+    async def get_all(self) -> list[Exercise]:
+        result = await self._session.exec(select(Exercise))
+        return list(result.all())
 
 
 class UserProfileRepository:

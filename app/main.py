@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
-from app.api import health, onboarding, routine, session, ws_voice
+from app.api import calendar, health, onboarding, routine, session, ws_voice
 from app.config import AppConfig, load_config
 from app.db.engine import init_db
 from app.utils.logging import setup_logging
@@ -128,6 +128,7 @@ app.include_router(health.router)
 app.include_router(session.router)
 app.include_router(routine.router)
 app.include_router(onboarding.router)
+app.include_router(calendar.router)
 app.include_router(ws_voice.router)
 
 

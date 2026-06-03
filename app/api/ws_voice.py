@@ -31,6 +31,7 @@ from app.db.models import SessionMode as DBSessionMode, SessionStatus
 from app.db.repositories import ExerciseRepository, SessionRepository, SetLogRepository
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.json_frame_serializer import JsonFrameSerializer
+from app.pipecat_services.coach_context_adapter import DBCoachContextAdapter
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
@@ -96,7 +97,16 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
 
     # ADR-013: shared ConfirmSlot between ConfirmRule + ActionDispatcher.
     slot = ConfirmSlot()
-    llm_processor = StructuredOllamaProcessor(config) if config else None
+
+    # Phase-8: wire calendar-aware context builder (ADR-013/020).
+    context_adapter: DBCoachContextAdapter | None = None
+    if config is not None:
+        weeks = getattr(config.coach, "calendar_pattern_weeks", 4)
+        context_adapter = DBCoachContextAdapter(calendar_pattern_weeks=weeks)
+
+    llm_processor = (
+        StructuredOllamaProcessor(config, context_adapter) if config else None  # type: ignore[arg-type]
+    )
 
     # ADR-014 phase-6: CountingManager + CountingInjectProcessor.
     counting_manager = CountingManager(config.counting) if config else None

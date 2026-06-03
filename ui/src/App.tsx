@@ -3,10 +3,12 @@ import { SessionProvider } from "@/state/session";
 import { Onboarding } from "@/screens/Onboarding";
 import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
+import { Calendar } from "@/screens/Calendar";
 
 const NAV = [
   { to: "/", label: "시작", end: true },
   { to: "/session", label: "운동", end: false },
+  { to: "/calendar", label: "기록", end: false },
   { to: "/settings", label: "설정", end: false },
 ];
 
@@ -25,6 +27,7 @@ export default function App() {
                 </SessionProvider>
               }
             />
+            <Route path="/calendar" element={<Calendar />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
