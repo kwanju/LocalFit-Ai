@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from loguru import logger
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.calendar_metrics import (
     compute_last_exercise_dates,
@@ -56,7 +57,7 @@ class DBCoachContextAdapter:
             )
             return await builder.build(recent_sessions=recent_sessions, now=now)
 
-    async def _fetch_calendar_signals(self, db) -> CalendarSignals:
+    async def _fetch_calendar_signals(self, db: AsyncSession) -> CalendarSignals:
         today = date.today()
         from_4w = today - timedelta(weeks=self._weeks)
         from_30d = today - timedelta(days=30)

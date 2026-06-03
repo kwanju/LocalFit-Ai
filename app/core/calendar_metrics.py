@@ -67,6 +67,69 @@ def compute_level(volume_today: float, max_volume_30d: float) -> int:
     return 4
 
 
+def _vol_by_date(
+    by_date: dict[date, list[Any]],
+    set_logs_by_session: dict[int, list[Any]],
+    exercise_names_by_id: dict[int, str],
+) -> dict[date, float]:
+    """Compute volume per calendar day from set logs."""
+    result: dict[date, float] = {}
+    for day, sessions in by_date.items():
+        vol = 0.0
+        for s in sessions:
+            for sl in set_logs_by_session.get(s.id, []):
+                name = exercise_names_by_id.get(sl.exercise_id, "")
+                intensity = EXERCISE_INTENSITY.get(name, _DEFAULT_INTENSITY)
+                vol += (sl.reps_completed or 0) * intensity
+        result[day] = vol
+    return result
+
+
+def _session_summaries(day_sessions: list[Any]) -> list[SessionSummary]:
+    """Build SessionSummary list for a single day's sessions."""
+    out: list[SessionSummary] = []
+    for s in day_sessions:
+        duration: int | None = None
+        if s.started_at is not None and s.ended_at is not None:
+            duration = max(0, int((s.ended_at - s.started_at).total_seconds() / 60))
+        started_str = (
+            s.started_at.isoformat() if hasattr(s.started_at, "isoformat") else str(s.started_at)
+        )
+        out.append(SessionSummary(id=s.id, started_at=started_str, duration_min=duration))
+    return out
+
+
+def _day_exercises(
+    day_sessions: list[Any],
+    set_logs_by_session: dict[int, list[Any]],
+    exercise_names_by_id: dict[int, str],
+) -> list[str]:
+    """Return ordered-unique exercise names performed in a single day."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for s in day_sessions:
+        for sl in set_logs_by_session.get(s.id, []):
+            name = exercise_names_by_id.get(sl.exercise_id, "")
+            if name and name not in seen:
+                names.append(name)
+                seen.add(name)
+    return names
+
+
+def _condition_avg(
+    day_sessions: list[Any],
+    conditions_by_session: dict[int, list[Any]],
+) -> float | None:
+    """Average fatigue level across all condition logs for a day's sessions."""
+    vals = [
+        c.fatigue_level
+        for s in day_sessions
+        for c in conditions_by_session.get(s.id, [])
+        if c.fatigue_level is not None
+    ]
+    return sum(vals) / len(vals) if vals else None
+
+
 def aggregate_daily(
     sessions: list[Any],
     set_logs_by_session: dict[int, list[Any]],
@@ -75,74 +138,31 @@ def aggregate_daily(
 ) -> list[DayStat]:
     """Aggregate sessions + set logs + conditions into per-day DayStat list.
 
-    Returns only days that have at least one session (calendar API consumer
-    treats missing days as level 0 implicitly).
+    Returns only days that have at least one session (missing days are level 0
+    implicitly on the client side).
     """
     by_date: dict[date, list[Any]] = {}
     for s in sessions:
-        day = _to_date(s.started_at)
-        by_date.setdefault(day, []).append(s)
+        by_date.setdefault(_to_date(s.started_at), []).append(s)
 
-    vol_by_date: dict[date, float] = {}
-    for day, day_sessions in by_date.items():
-        vol = 0.0
-        for s in day_sessions:
-            for sl in set_logs_by_session.get(s.id, []):
-                name = exercise_names_by_id.get(sl.exercise_id, "")
-                intensity = EXERCISE_INTENSITY.get(name, _DEFAULT_INTENSITY)
-                reps = sl.reps_completed or 0
-                vol += reps * intensity
-        vol_by_date[day] = vol
+    volumes = _vol_by_date(by_date, set_logs_by_session, exercise_names_by_id)
 
     result: list[DayStat] = []
     for day in sorted(by_date):
-        vol = vol_by_date[day]
+        vol = volumes[day]
         cutoff = day - timedelta(days=30)
         max_vol_30d = max(
-            (v for d, v in vol_by_date.items() if cutoff <= d <= day),
-            default=0.0,
+            (v for d, v in volumes.items() if cutoff <= d <= day), default=0.0
         )
-
         day_sessions = by_date[day]
-        summaries: list[SessionSummary] = []
-        for s in day_sessions:
-            duration: int | None = None
-            if s.started_at is not None and s.ended_at is not None:
-                delta = s.ended_at - s.started_at
-                duration = max(0, int(delta.total_seconds() / 60))
-            started_str = (
-                s.started_at.isoformat()
-                if hasattr(s.started_at, "isoformat")
-                else str(s.started_at)
-            )
-            summaries.append(
-                SessionSummary(id=s.id, started_at=started_str, duration_min=duration)
-            )
-
-        ex_names: list[str] = []
-        seen: set[str] = set()
-        for s in day_sessions:
-            for sl in set_logs_by_session.get(s.id, []):
-                name = exercise_names_by_id.get(sl.exercise_id, "")
-                if name and name not in seen:
-                    ex_names.append(name)
-                    seen.add(name)
-
-        fatigue_vals: list[int] = []
-        for s in day_sessions:
-            for c in conditions_by_session.get(s.id, []):
-                if c.fatigue_level is not None:
-                    fatigue_vals.append(c.fatigue_level)
-        cond_avg = sum(fatigue_vals) / len(fatigue_vals) if fatigue_vals else None
-
         result.append(
             DayStat(
                 date=day,
                 level=compute_level(vol, max_vol_30d),
                 volume=vol,
-                sessions=summaries,
-                exercises=ex_names,
-                condition_avg=cond_avg,
+                sessions=_session_summaries(day_sessions),
+                exercises=_day_exercises(day_sessions, set_logs_by_session, exercise_names_by_id),
+                condition_avg=_condition_avg(day_sessions, conditions_by_session),
             )
         )
     return result

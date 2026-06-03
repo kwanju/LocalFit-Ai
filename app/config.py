@@ -75,6 +75,7 @@ class CoachResponseLengthConfig(BaseModel):
 class CoachConfig(BaseModel):
     proactive_opener: bool = True
     context_recent_sessions: int = 5
+    calendar_pattern_weeks: int = 4          # ADR-013 §config: 캘린더 패턴 분석 기간
     response_length: CoachResponseLengthConfig = CoachResponseLengthConfig()
     instructor: InstructorConfig = InstructorConfig()
 
