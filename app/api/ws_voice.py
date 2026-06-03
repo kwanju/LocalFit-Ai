@@ -75,6 +75,10 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         await websocket.close()
         return
 
+    # Pipecat 1.3.0 removed the implicit websocket.accept() from the transport;
+    # the caller is now responsible for accepting before the transport starts.
+    await websocket.accept()
+
     config: AppConfig | None = getattr(websocket.app.state, "config", None)
     use_stt = session_mode in (SessionMode.s2s, SessionMode.s2c)
     audio_in_sr = config.vad.sample_rate if (config and use_stt) else 16000
