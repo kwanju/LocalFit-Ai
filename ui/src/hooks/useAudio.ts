@@ -295,9 +295,9 @@ export function useAudio(): UseAudio {
       }
 
       const samples = pcm16ToFloat32(base64ToBytes(pcmB64));
-      // Backend may stream at e.g. 44.1kHz (MeloTTS) while the context might be
-      // anchored to a different rate from the very first chunk. Use the chunk's
-      // declared rate when building the AudioBuffer; WebAudio resamples on play.
+      // The TTS may stream at a rate (faster-qwen3-tts = 24kHz) different from the
+      // AudioContext's anchored rate. Use the chunk's declared rate when building
+      // the AudioBuffer; WebAudio resamples on play.
       const buffer = ctx.createBuffer(1, samples.length, sampleRate);
       // `copyToChannel` 의 TS 시그니처가 `Float32Array<ArrayBuffer>` 만 받으므로
       // (`Float32Array<ArrayBufferLike>` 가 아닌) channelData.set() 으로 직접 복사.

@@ -78,7 +78,7 @@
 
 | 영역 | v3 | v4 검토 |
 |---|---|---|
-| TTS | MeloTTS / Qwen3-TTS-Base (slow) | **faster-qwen3-tts (Qwen3-TTS-12Hz-1.7B-Base + faster 백엔드)** ([상세](faster-qwen3-tts.md)) |
+| TTS | **faster-qwen3-tts (Qwen3-TTS-12Hz-1.7B-Base + faster 백엔드)** ✅ 통합 완료 ([상세](../_archive/v3/faster-qwen3-tts.md)) | 유지 또는 token-streaming 도입(첫 청크 ~390ms) |
 | STT | faster-whisper large-v3-turbo | 유지 또는 더 작은 모델로 latency 개선 |
 | LLM | qwen3:8b (Ollama) | tool-use 모델 + function calling 강화 |
 | 에이전트 프레임워크 | 자체 구현 (StructuredOllamaProcessor + ConfirmRule) | LangGraph / LlamaIndex / 직접 짠 framework 결정 |
@@ -103,7 +103,7 @@
 - [x] Dispatch guard — LLM 마음대로 운동 시작 차단 (완료)
 - [x] 세션 종료 시 LLM history/slot 즉시 비움 (완료)
 - [x] 다회 세트 + 휴식 + 볼륨 + 데이터 초기화 (완료)
-- [ ] **faster-qwen3-tts 통합** ([상세 가이드](faster-qwen3-tts.md)) — 다음 세션
+- [x] **faster-qwen3-tts 통합** (2026-06-08 완료, 커밋 `697801b` — [회고](../_archive/v3/faster-qwen3-tts.md))
 - [ ] 사용자가 위 모든 변경 검증
 - [ ] 검증 끝나면 master 동결 + v4 시작
 

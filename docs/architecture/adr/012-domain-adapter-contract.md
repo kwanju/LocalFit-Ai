@@ -40,8 +40,7 @@ app/
 │   │   ├── faster_whisper_client.py # faster-whisper 직접 호출
 │   │   └── resample.py             # librosa 16kHz 강제
 │   └── tts/
-│       ├── qwen3_client.py         # transformers Qwen3-TTS + SDPA
-│       └── melotts_client.py       # fallback
+│       └── qwen3_client.py         # faster-qwen3-tts (단독, MeloTTS 제거 2026-06-08)
 ├── pipecat_services/               # ← Pipecat 통합 레이어
 │   ├── ollama_service.py           # OllamaLLMService 래핑 + instructor
 │   ├── whisper_service.py          # WhisperSTTService 래핑 또는 자체

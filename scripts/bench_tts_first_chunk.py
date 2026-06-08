@@ -3,7 +3,6 @@
 Usage:
     uv run python scripts/bench_tts_first_chunk.py
     uv run python scripts/bench_tts_first_chunk.py "다른 문장을 시험"
-    uv run python scripts/bench_tts_first_chunk.py --melo
 
 Reports the per-run latency and the mean.  Phase 3 DoD target = mean < 500ms.
 """
@@ -21,13 +20,9 @@ _DEFAULT_TEXT = "안녕하세요, 운동 시작할까요?"
 _RUNS = 5
 
 
-async def _bench(text: str, force_melo: bool) -> None:
+async def _bench(text: str) -> None:
     setup_logging(level="INFO")
     config = load_config()
-    if force_melo:
-        config = config.model_copy(
-            update={"tts": config.tts.model_copy(update={"active": "melo"})}
-        )
 
     from app.adapters.tts import get_tts_adapter
 
@@ -63,9 +58,8 @@ async def _bench(text: str, force_melo: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("text", nargs="?", default=_DEFAULT_TEXT)
-    parser.add_argument("--melo", action="store_true", help="force tts.active=melo")
     args = parser.parse_args()
-    asyncio.run(_bench(args.text, args.melo))
+    asyncio.run(_bench(args.text))
 
 
 if __name__ == "__main__":

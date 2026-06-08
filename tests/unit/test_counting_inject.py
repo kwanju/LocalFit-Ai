@@ -1,8 +1,8 @@
-"""tests/unit/test_counting_inject.py — beat → TextFrame 변환 (phase-6 §6-7)."""
+"""tests/unit/test_counting_inject.py — beat → TTSSpeakFrame 변환 (phase-6 §6-7)."""
 
 import asyncio
 
-from pipecat.frames.frames import TextFrame, TTSSpeakFrame
+from pipecat.frames.frames import TTSSpeakFrame
 
 from app.core.counting import BeatEvent, CountingEngine, ExerciseMode
 from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
@@ -89,7 +89,7 @@ async def test_full_engine_cues_reach_inject() -> None:
 
 async def test_process_frame_passes_through() -> None:
     """process_frame must forward all non-beat frames unchanged."""
-    from pipecat.frames.frames import TextFrame, TTSSpeakFrame
+    from pipecat.frames.frames import TextFrame
     from pipecat.tests.utils import run_test
 
     inject_proc = CountingInjectProcessor()

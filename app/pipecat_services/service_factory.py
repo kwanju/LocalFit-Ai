@@ -21,20 +21,13 @@ def build_tts_service(tts_client: object) -> FrameProcessor | None:
     if tts_client is None:
         return None
 
-    # Imports are local so a missing optional dep (e.g. Qwen3) doesn't break MeloTTS startup.
+    # Local import so a missing optional GPU dep doesn't break import-time.
     from app.adapters.tts.qwen3_client import Qwen3TTSClient
 
     if isinstance(tts_client, Qwen3TTSClient):
         from app.pipecat_services.qwen3_tts_service import Qwen3TTSService
 
         return Qwen3TTSService(tts_client)
-
-    from app.adapters.tts.melo_client import MeloTTSClient
-
-    if isinstance(tts_client, MeloTTSClient):
-        from app.pipecat_services.melo_tts_service import MeloTTSService
-
-        return MeloTTSService(tts_client)
 
     logger.warning("build_tts_service: unknown client type {}", type(tts_client).__name__)
     return None

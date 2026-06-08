@@ -5,23 +5,14 @@ from app.config import AppConfig
 
 
 def get_tts_adapter(config: AppConfig) -> Any:
-    """Return the configured TTS client (ADR-006 toggle: qwen3 | melo)."""
+    """Return the configured TTS client (ADR-006: faster-qwen3-tts only).
+
+    MeloTTS was removed 2026-06-08 — qwen3(faster) is the sole TTS backend.
+    """
     name = config.tts.active
     if name == "qwen3":
         return Qwen3TTSClient(config)
-    if name == "melo":
-        from app.adapters.tts.melo_client import MeloTTSClient
-        return MeloTTSClient(config)
-    raise ValueError(f"Unknown TTS adapter: {name}")
+    raise ValueError(f"Unknown TTS adapter: {name} (only 'qwen3' is supported)")
 
 
-def __getattr__(name: str) -> Any:
-    if name == "Qwen3TTSClient":
-        return Qwen3TTSClient
-    if name == "MeloTTSClient":
-        from app.adapters.tts.melo_client import MeloTTSClient
-        return MeloTTSClient
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-__all__ = ["get_tts_adapter", "TTSRequest", "Qwen3TTSClient", "MeloTTSClient"]
+__all__ = ["get_tts_adapter", "TTSRequest", "Qwen3TTSClient"]

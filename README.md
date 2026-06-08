@@ -20,7 +20,7 @@ FastAPI
           ├─ SileroVAD → faster-whisper STT
           ├─ SafetyGuard → ConfirmRule → StructuredOllama (instructor + qwen3:8b)
           ├─ ActionDispatcher → CountingEngine
-          └─ SentenceAggregator → MeloTTS / Qwen3-TTS
+          └─ SentenceAggregator → faster-qwen3-tts
     └─ REST API  /api/*
           └─ SQLite (SQLModel)
 ```
@@ -79,7 +79,7 @@ ollama pull qwen3:8b
 uv run python scripts/setup-models.py
 ```
 
-> TTS 기본값은 MeloTTS(경량). Qwen3-TTS 보이스 클론을 쓰려면 `config.yaml`에서 `tts.active: qwen3`으로 변경.
+> TTS는 faster-qwen3-tts 단독(보이스 클론). `data/ref_voice.wav`(참조 음성)가 필요합니다.
 
 ### 4. 개발 서버 실행
 
@@ -140,9 +140,10 @@ stt:
   device: "cuda"             # cuda | cpu
 
 tts:
-  active: "melo"             # melo(기본) | qwen3(보이스 클론)
-  melo:
-    device: "cuda:0"
+  active: "qwen3"            # faster-qwen3-tts 단독 (ADR-006)
+  qwen3:
+    ref_audio_path: "data/ref_voice.wav"   # 보이스 클론 참조 음성
+    xvec_only: "true"        # 음색 일관성
 
 vad:
   threshold: 0.5             # 음성 감지 임계값 (0~1)
@@ -214,7 +215,7 @@ uv run pytest -m gpu -v
 |---|---|
 | LLM 런타임 | Ollama + qwen3:8b |
 | STT | faster-whisper large-v3-turbo + 16kHz 강제 리샘플 |
-| TTS | MeloTTS (기본) / Qwen3-TTS SDPA (보이스 클론) |
+| TTS | faster-qwen3-tts (Qwen3-TTS-12Hz-1.7B-Base, CUDA Graphs, 보이스 클론) |
 | VAD / Turn | silero-vad (Pipecat 통합) |
 | 음성 파이프라인 | Pipecat FastAPIWebsocketTransport |
 | 구조화 출력 | instructor + Pydantic (JSON schema validation + auto-retry) |

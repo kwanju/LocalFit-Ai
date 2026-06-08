@@ -16,7 +16,6 @@ dependencies = [
     "pipecat-ai[silero,whisper]>=1.3.0",
     "instructor>=1.6",
     "openai>=1.50",
-    "faster-qwen3-tts>=0.2.6",
 ]
 
 [project.optional-dependencies]
@@ -27,15 +26,7 @@ gpu = [
     "transformers>=4.45",
     "librosa>=0.10",
     "soundfile>=0.12",
-    "qwen-tts>=0.1.1",
-    # MeloTTS — no PyPI release, install from upstream (MIT) — ADR-006 (2026-06-02 개정).
-    # Distribution name is `melotts`; import path is `from melo.api import TTS`.
-    "melotts @ git+https://github.com/myshell-ai/MeloTTS.git",
-    # Korean G2P backend: g2pkk on Windows defaults to `eunjeon` which needs MSVC
-    # build tools.  python-mecab-ko ships a prebuilt Windows wheel; melo_client
-    # monkey-patches g2pkk to use it instead.
-    "python-mecab-ko>=1.3.7",
-    "python-mecab-ko-dic>=2.1.1",
+    "faster-qwen3-tts>=0.2.6",   # Qwen3-TTS faster 백엔드 (ADR-006) — 단독 TTS (qwen-tts·MeloTTS 대체, 2026-06-08)
 ]
 dev = [
     "pytest>=8.0",
@@ -51,10 +42,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
-
-[tool.hatch.metadata]
-# Required for MeloTTS git+https direct reference in [project.optional-dependencies]
-allow-direct-references = true
 
 [tool.ruff]
 line-length = 100
@@ -82,10 +69,9 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
-# MeloTTS pins transformers==4.27.4 which conflicts with qwen-tts and our own
-# transformers>=4.45 requirement (ADR-006 2026-06-02 개정).  Forcing the newer
-# version here keeps a single environment; MeloTTS only uses transformers for
-# the BERT-based Korean G2P (AutoTokenizer), which is stable across 4.27→4.45.
+# Pin shared transitive deps to a single version across the GPU stack
+# (faster-qwen3-tts / faster-whisper / qwen-tts).  transformers>=4.45 in
+# particular avoids older pins pulled in transitively (ADR-006).
 [tool.uv]
 override-dependencies = [
     "transformers>=4.45",

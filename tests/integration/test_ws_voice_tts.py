@@ -1,7 +1,7 @@
 """S2S/C2S round-trip — TextFrame in → real TTSAudioRawFrame out.
 
-GPU-required because the pipeline includes the real Qwen3 (or Melo) service
-loaded from config.tts.active.  Skips cleanly when the adapter cannot load.
+GPU-required because the pipeline includes the real Qwen3 TTS service loaded
+from config.tts.active.  Skips cleanly when the adapter cannot load.
 """
 
 import pytest
@@ -30,12 +30,6 @@ def tts_service():
 
     if isinstance(client, Qwen3TTSClient):
         return Qwen3TTSService(client)
-
-    from app.adapters.tts.melo_client import MeloTTSClient
-    from app.pipecat_services.melo_tts_service import MeloTTSService
-
-    if isinstance(client, MeloTTSClient):
-        return MeloTTSService(client)
     pytest.skip(f"Unsupported active adapter: {type(client).__name__}")
 
 
@@ -49,6 +43,6 @@ async def test_text_frame_produces_real_audio_frame(tts_service):
     audio_frames = [f for f in down if isinstance(f, TTSAudioRawFrame)]
     assert audio_frames, "expected at least one TTSAudioRawFrame"
     f0 = audio_frames[0]
-    assert f0.sample_rate in (24000, 44100), f"unexpected sample_rate {f0.sample_rate}"
+    assert f0.sample_rate == 24000, f"unexpected sample_rate {f0.sample_rate}"
     assert f0.num_channels == 1
     assert len(f0.audio) > 1000, "frame audio is suspiciously short"

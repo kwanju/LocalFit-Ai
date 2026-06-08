@@ -254,13 +254,13 @@ PR 한 개로 마무리 가능. 실패 시 config 토글로 즉시 melo 또는 q
 
 - API 차이: `create_voice_clone_prompt` 메서드 없음(README 오류). 대신 `FasterQwen3TTS`가 `(ref_audio, ref_text)` 키로 **내부 캐싱** → 매 호출 ref만 전달하면 됨. `from_pretrained`는 `device`/`dtype`/`attn_implementation` 그대로 수용.
 
-### 체크리스트
+### 체크리스트 (2026-06-08 완료)
 
 - [x] 실측 TTFA / RTF 수치 (위 표)
 - [x] ADR-006 개정 (`docs/architecture/adr/006-tts.md` §faster-qwen3-tts 백엔드, 2026-06-07 개정)
 - [x] config.yaml / config.example.yaml: `active: qwen3`, `device`(was device_map), `timeout 30s`
-- [x] 단위 254개 + GPU 통합(qwen3) 통과
-- [ ] **사용자 브라우저 E2E** (§6-2: C2S 첫 응답 <1s, 카운팅 음성, 음성 품질 MeloTTS 대비)
-- [ ] 음성 품질 평가 메모 (사용자 청취 후)
-- [ ] `qwen-tts` 패키지 제거 (`uv remove qwen-tts`) — faster 안정화 확인 후
-- [ ] 통합 완료(E2E 통과) 후 이 문서는 `_archive/v3/` 로 이동
+- [x] 단위 + GPU 통합(qwen3) 통과
+- [x] **사용자 브라우저 E2E** — opener/카운트TTS/탭이동/세션종료 확인. 후속 버그(카운트 뭉침·드롭, 휴식 침묵, 음색 일관성, 5세트 수정, 플랭크 시간) 전부 수정 (커밋 `697801b` 외).
+- [x] 음성 품질/일관성: `do_sample=false` + `xvec_only=true` (x-vector 클로닝)로 음색 고정. temperature 0.7.
+- [x] ~~`qwen-tts` 패키지 제거~~ → **불가**: `faster-qwen3-tts`가 `qwen-tts`를 transitive 의존성으로 요구함(lock 확인). 대신 **우리 명시적(direct) 의존성에서만 제거** (pyproject `gpu` 그룹: qwen-tts → faster-qwen3-tts). qwen-tts는 faster를 통해서만 설치됨.
+- [x] 통합 완료 → 이 문서 `docs/_archive/v3/` 로 이동 (2026-06-08)

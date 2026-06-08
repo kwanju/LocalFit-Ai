@@ -92,51 +92,6 @@ async def test_qwen3_first_chunk_5x_under_500ms(qwen3_client):
 
 
 # ---------------------------------------------------------------------------
-# MeloTTS
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def melo_client(config):
-    try:
-        from app.adapters.tts.melo_client import MeloTTSClient
-
-        return MeloTTSClient(config)
-    except Exception as e:
-        pytest.skip(f"MeloTTS unavailable: {e}")
-
-
-async def test_melo_health(melo_client):
-    assert await melo_client.health() is True
-
-
-async def test_melo_synthesize_returns_wav_bytes(melo_client):
-    wav = await melo_client.synthesize("안녕하세요.")
-    assert wav[:4] == b"RIFF"
-
-
-async def test_melo_stream_yields_pcm_chunks(melo_client):
-    chunks = []
-    async for chunk in melo_client.stream(_SHORT_PHRASE):
-        assert isinstance(chunk, bytes) and len(chunk) > 0
-        chunks.append(chunk)
-    assert len(chunks) >= 1
-
-
-async def test_melo_first_chunk_5x_under_500ms(melo_client):
-    samples: list[float] = []
-    for _ in range(_FIVE_SAMPLES):
-        t0 = time.monotonic()
-        async for _chunk in melo_client.stream(_SHORT_PHRASE):
-            samples.append((time.monotonic() - t0) * 1000.0)
-            break
-    mean_ms = sum(samples) / len(samples)
-    print(f"\nMeloTTS first-chunk 5x samples (ms): {samples}")
-    print(f"MeloTTS first-chunk 5x mean: {mean_ms:.1f}ms (budget {_FIRST_CHUNK_BUDGET_MS}ms)")
-    assert mean_ms < _FIRST_CHUNK_BUDGET_MS
-
-
-# ---------------------------------------------------------------------------
 # Adapter registry
 # ---------------------------------------------------------------------------
 

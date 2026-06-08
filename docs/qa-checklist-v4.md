@@ -84,7 +84,7 @@
 
 | # | 항목 | 기대 결과 |
 |---|---|---|
-| M-5 | Qwen3-TTS 또는 MeloTTS 음성 재생 | 자연스러운 한국어 TTS, 잡음 없음 |
+| M-5 | faster-qwen3-tts 음성 재생 | 자연스러운 한국어 TTS, 음색 일관(xvec_only), 잡음 없음 |
 | M-6 | sentence-streaming 분절 없음 | 문장 단위로 연속 재생 (끊김 최소화) |
 
 ### B-3. 능동 코치 제안 적절성

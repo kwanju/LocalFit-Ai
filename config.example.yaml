@@ -19,7 +19,7 @@ stt:
   resample_to: 16000                # ADR-005 §결정: 입력 != 16k면 강제 리샘플
 
 tts:
-  active: "qwen3"                   # ADR-006: "qwen3" | "melo" — qwen3는 faster-qwen3-tts 백엔드. melo는 롤백용
+  active: "qwen3"                   # ADR-006: faster-qwen3-tts 단독 (MeloTTS 제거 2026-06-08)
   qwen3:
     model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     ref_audio_path: "data/ref_voice.wav"   # 참조 음성 (6초 이상 한국어 WAV) — voice clone
@@ -35,12 +35,6 @@ tts:
     repetition_penalty: "1.05"
     do_sample: "true"               # "false"면 그리디(가장 일관, 다소 단조로울 수 있음)
     xvec_only: "false"              # "true"면 x-vector 화자 임베딩 클로닝(음색 일관성↑, 충실도↓). 발화마다 목소리 달라지면 "true"
-  melo:
-    language: "KR"                  # MeloTTS 언어 코드 (한국어)
-    device: "cuda:0"
-    speaker_id: "0"                 # MeloTTS preset speaker (한국어는 단일 화자)
-    speed: "1.0"
-    timeout_sec: "30.0"
 
 vad:
   model: "silero_vad"               # silero-vad via pipecat-ai[silero] (ADR-007)
