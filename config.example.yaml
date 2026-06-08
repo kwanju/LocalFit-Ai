@@ -35,6 +35,7 @@ tts:
     repetition_penalty: "1.05"
     do_sample: "true"               # "false"면 그리디(가장 일관, 다소 단조로울 수 있음)
     xvec_only: "false"              # "true"면 x-vector 화자 임베딩 클로닝(음색 일관성↑, 충실도↓). 발화마다 목소리 달라지면 "true"
+    chunk_size: "12"                # token-streaming 청크 크기 — 작을수록 첫 소리 빠름(첫 청크 ~390ms), 프레임 수↑
 
 vad:
   model: "silero_vad"               # silero-vad via pipecat-ai[silero] (ADR-007)

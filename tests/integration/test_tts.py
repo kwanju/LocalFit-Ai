@@ -69,16 +69,15 @@ async def test_qwen3_stream_yields_pcm_chunks(qwen3_client):
 
 
 @pytest.mark.xfail(
-    reason="faster-qwen3-tts sentence-batch 첫 청크 ≈ 1000ms (RTX 5090, 문장 전체 합성 대기). "
-    "기존 qwen-tts ~5000ms 대비 5x 개선이나 500ms 예산은 여전히 미달 — sentence-batch 구조상 "
-    "한 문장이 끝나야 첫 청크가 나오기 때문. token-level streaming(Option B, "
-    "generate_voice_clone_streaming) 도입 시 첫 청크 ~390ms로 충족 가능 (ADR-006 §후속). "
-    "회귀 추적용으로 xfail 유지.",
+    reason="faster-qwen3-tts token-streaming 첫 청크: 첫 발화 ~360ms, 연속 정상상태 ~1000ms "
+    "(RTX 5090, 전용 스레드로 CUDA graph 재사용 안정화, 5x 평균 ~900ms). 짧은 문장 5x rapid-fire "
+    "평균은 500ms 예산 미달이나, streaming은 문장 길이와 무관하게 첫 소리가 나와 긴 코치 발화에서 "
+    "sentence-batch보다 유리(ADR-006 §후속). 회귀 추적용 xfail 유지.",
     strict=False,
 )
 async def test_qwen3_first_chunk_5x_under_500ms(qwen3_client):
-    """ADR-006 Phase 3 DoD — first-chunk latency 5x mean < 500ms.  faster-qwen3-tts sentence-batch는
-    문장 전체 합성을 기다려 ~1000ms (실측, RTX 5090). 회귀 추적용으로 xfail 유지."""
+    """ADR-006 Phase 3 DoD — first-chunk latency 5x mean < 500ms.  token-streaming은 첫 발화
+    ~360ms / 정상상태 ~1000ms (실측, RTX 5090). 회귀 추적용으로 xfail 유지."""
     samples: list[float] = []
     for _ in range(_FIVE_SAMPLES):
         t0 = time.monotonic()

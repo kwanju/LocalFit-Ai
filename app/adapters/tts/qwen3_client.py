@@ -9,11 +9,12 @@ on RTX 5090 (ADR-006, 2026-06-07 개정).
 
 Streaming
 ---------
-We keep *sentence-batch* streaming: the LLM-side caller passes a paragraph, we
-split on Korean punctuation, synthesise sentence-by-sentence, and yield 16-bit
-PCM bytes for each completed sentence so playback can start before later
-sentences finish.  (`generate_voice_clone_streaming` exists for token-level
-streaming if even lower TTFA is needed later — see ADR-006 §후속.)
+*Token-level* streaming (ADR-006 §후속, 2026-06-08): `stream()` drives
+`generate_voice_clone_streaming` so the first audio chunk arrives mid-utterance
+(TTFA ~390ms vs ~880ms sentence-batch).  The upstream generator is sync, so we
+run it on a worker thread and bridge chunks to the async generator via a
+thread-safe queue.  `synthesize()` (full-WAV, non-Pipecat) keeps the
+sentence-batch path via `_synth_sentence`.
 
 Voice cloning
 -------------
@@ -31,6 +32,7 @@ import re
 import sys
 import time
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -91,7 +93,7 @@ def _float32_to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
 
 
 class Qwen3TTSClient:
-    """Qwen3-TTS adapter — sentence-batch streaming + cached voice-clone prompt."""
+    """Qwen3-TTS adapter — token-level streaming + cached voice-clone prompt."""
 
     sample_rate: int = _OUTPUT_SAMPLE_RATE
 
@@ -102,10 +104,18 @@ class Qwen3TTSClient:
         )
         self._language: str = qwen_cfg.get("language", "Korean")
         self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "30.0"))
+        # token-level streaming chunk size (ADR-006 §후속): smaller → lower TTFA,
+        # more (smaller) frames.  12 ≈ first chunk ~390ms on RTX 5090.
+        self._chunk_size: int = int(qwen_cfg.get("chunk_size", "12"))
         self._gen_kwargs = self._build_gen_kwargs(qwen_cfg)
         self._model, self._torch = self._load_model(model_id, attn_impl, device)
+        # ALL torch/CUDA generation runs on this single dedicated thread so the
+        # CUDA graphs (captured during warmup) are reused — running generation on
+        # varying executor threads recaptured the graph every call and TTFA blew
+        # up 390ms→5800ms (2026-06-08 verification).  One thread = one CUDA stream.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qwen3-tts")
         self._ready = False
-        self._warmup()
+        self._executor.submit(self._warmup).result()
         logger.info("Qwen3-TTS ready: {} sample_rate={}", model_id, _OUTPUT_SAMPLE_RATE)
 
     @staticmethod
@@ -186,14 +196,24 @@ class Qwen3TTSClient:
     def _warmup(self) -> None:
         """Trigger CUDA-graph capture + voice-prompt extraction at startup.
 
-        The first `generate_voice_clone` call captures CUDA graphs (~7s) and
-        extracts the voice-clone prompt from the reference audio.  Doing it here
-        keeps the user's first real utterance fast (~1s) and populates the
-        model's internal `_voice_prompt_cache` for `(ref_audio, ref_text)`.
+        Warms the *streaming* path (the hot path used by `stream()`): the first
+        `generate_voice_clone_streaming` call captures CUDA graphs (~7s) and
+        extracts the voice-clone prompt from the reference audio, so the user's
+        first real utterance is fast and the model's internal
+        `_voice_prompt_cache` for `(ref_audio, ref_text)` is populated.
         """
         logger.info("Warming up faster-qwen3-tts (CUDA graph + voice prompt) ...")
         t0 = time.monotonic()
-        self._synth_sentence("안녕하세요.")
+        with self._torch.no_grad():
+            for _chunk, _sr, _timing in self._model.generate_voice_clone_streaming(
+                text="안녕하세요.",
+                language=self._language,
+                ref_audio=self._ref_audio_path,
+                ref_text=self._ref_text,
+                chunk_size=self._chunk_size,
+                **self._gen_kwargs,
+            ):
+                pass
         self._ready = True
         logger.info("faster-qwen3-tts warmup done in {}ms", int((time.monotonic() - t0) * 1000))
 
@@ -219,25 +239,64 @@ class Qwen3TTSClient:
         return wavs[0], int(sr)
 
     async def stream(self, request: TTSRequest | str) -> AsyncIterator[bytes]:
-        """Sentence-batch stream: yields 16-bit PCM mono bytes per sentence.
+        """Token-level stream: yields 16-bit PCM mono bytes as the model emits them.
 
-        Sample rate is `self.sample_rate` (24000 Hz). Pipecat service is
-        responsible for wrapping the bytes in `TTSAudioRawFrame`.
+        Uses `generate_voice_clone_streaming` so the first audio chunk arrives
+        before the full utterance is synthesised (TTFA ~390ms vs ~880ms
+        sentence-batch, ADR-006 §후속).  The upstream generator is synchronous, so
+        we drive it on a worker thread and bridge chunks to this async generator
+        via a thread-safe queue.  Sample rate is `self.sample_rate` (24000 Hz);
+        the Pipecat service wraps the bytes in `TTSAudioRawFrame`.
         """
-        text = request.text if isinstance(request, TTSRequest) else request
-        sentences = _split_sentences(text)
-        logger.debug("Qwen3-TTS stream: {} sentence(s)", len(sentences))
-        for sentence in sentences:
-            audio, sr = await asyncio.wait_for(
-                asyncio.to_thread(self._synth_sentence, sentence),
-                timeout=self._timeout_sec,
-            )
-            if sr != _OUTPUT_SAMPLE_RATE:
-                # Sanity log — upstream is documented as 24kHz; warn if changed.
-                logger.warning(
-                    "Qwen3-TTS sample_rate {} != expected {}", sr, _OUTPUT_SAMPLE_RATE
+        text = (request.text if isinstance(request, TTSRequest) else request).strip()
+        if not text:
+            return
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        sentinel = object()
+        error_box: list[BaseException] = []
+
+        def _produce() -> None:
+            try:
+                with self._torch.no_grad():
+                    for chunk, sr, _timing in self._model.generate_voice_clone_streaming(
+                        text=text,
+                        language=self._language,
+                        ref_audio=self._ref_audio_path,
+                        ref_text=self._ref_text,
+                        chunk_size=self._chunk_size,
+                        **self._gen_kwargs,
+                    ):
+                        if sr != _OUTPUT_SAMPLE_RATE:
+                            logger.warning(
+                                "Qwen3-TTS sample_rate {} != expected {}", sr, _OUTPUT_SAMPLE_RATE
+                            )
+                        loop.call_soon_threadsafe(queue.put_nowait, _float_to_pcm16(chunk))
+            except BaseException as e:  # noqa: BLE001 — surfaced to the consumer below
+                error_box.append(e)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+        t0 = time.monotonic()
+        fut = loop.run_in_executor(self._executor, _produce)
+        first = True
+        while True:
+            # Per-chunk gap timeout — chunks normally arrive every ~50-200ms.
+            item = await asyncio.wait_for(queue.get(), timeout=self._timeout_sec)
+            if item is sentinel:
+                break
+            if first:
+                logger.debug(
+                    "Qwen3-TTS stream first chunk: '{}...' in {}ms",
+                    text[:30], int((time.monotonic() - t0) * 1000),
                 )
-            yield _float_to_pcm16(audio)
+                first = False
+            yield item  # type: ignore[misc]
+
+        await fut
+        if error_box:
+            raise error_box[0]
 
     async def synthesize(self, request: TTSRequest | str) -> bytes:
         """Full-paragraph WAV synthesis (single byte blob with header).
@@ -251,9 +310,11 @@ class Qwen3TTSClient:
         sentences = _split_sentences(text)
         pieces: list[np.ndarray] = []
         sample_rate = _OUTPUT_SAMPLE_RATE
+        loop = asyncio.get_running_loop()
         for sentence in sentences:
+            # Same dedicated executor as stream() — keep all CUDA work on one thread.
             audio, sr = await asyncio.wait_for(
-                asyncio.to_thread(self._synth_sentence, sentence),
+                loop.run_in_executor(self._executor, self._synth_sentence, sentence),
                 timeout=self._timeout_sec,
             )
             sample_rate = sr
