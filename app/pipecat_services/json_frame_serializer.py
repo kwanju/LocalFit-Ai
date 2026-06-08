@@ -33,6 +33,7 @@ from loguru import logger
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
+    InputTextRawFrame,
     InputTransportMessageFrame,
     InterruptionFrame,
     OutputAudioRawFrame,
@@ -101,7 +102,11 @@ class JsonFrameSerializer(FrameSerializer):
             text = obj.get("text", "")
             if not isinstance(text, str):
                 return None
-            return TextFrame(text=text)
+            # 채팅 사용자 입력은 InputTextRawFrame — 음성(STT TranscriptionFrame)과 동일하게
+            # SafetyGuard·ConfirmRule·LLM 이 모두 '사용자 입력'으로 처리한다. 순수 TextFrame
+            # 으로 만들면 ConfirmRule/Safety 가 건너뛰어 채팅 확답("ㄱㄱ" 등)이 안 먹었다
+            # (2026-06-08 fix). 시스템 주입 메시지(opener·휴식 안내)는 계속 TextFrame.
+            return InputTextRawFrame(text=text)
 
         if msg_type == "audio":
             raw_data = obj.get("data", "")

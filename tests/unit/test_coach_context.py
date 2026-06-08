@@ -33,12 +33,19 @@ def _cond(fatigue: int):
     return SimpleNamespace(fatigue_level=fatigue, pain_report=None, notes=None)
 
 
+def _set_log(session_id: int = 1):
+    return SimpleNamespace(
+        session_id=session_id, exercise_id=1, set_number=1, reps_completed=10
+    )
+
+
 @pytest.fixture
 def builder() -> CoachContextBuilder:
     return CoachContextBuilder(
         profile_repo=AsyncMock(get=AsyncMock(return_value=_profile())),
         session_repo=AsyncMock(get_recent=AsyncMock(return_value=[_session(1)])),
-        set_repo=AsyncMock(),
+        # 세션 1번은 set_log이 1개 있어 effective_session으로 카운트됨.
+        set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[_set_log(1)])),
         condition_repo=AsyncMock(get_by_session=AsyncMock(return_value=[_cond(7)])),
         routine_repo=AsyncMock(list_all=AsyncMock(return_value=[_routine("월수금 풀세트")])),
     )
@@ -60,15 +67,31 @@ class TestBuild:
         b = CoachContextBuilder(
             profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
             session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
-            set_repo=AsyncMock(),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
             condition_repo=AsyncMock(),
             routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
         )
         ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
         assert "사용자 프로필 없음" in ctx
         assert "활성 루틴 없음" in ctx
-        assert "최근 운동 기록 없음" in ctx
+        # SetLog 없는 사용자 — 신규 사용자로 표기 (2026-06-04 개정)
+        assert "신규 사용자" in ctx
         assert "아침" in ctx
+
+    async def test_sessions_without_set_logs_are_excluded(self) -> None:
+        """연결만 하고 운동 안 한 세션(SetLog 없음)은 'history' 로 카운트하지 않는다."""
+        sessions = [_session(1), _session(2), _session(3)]
+        b = CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=sessions)),
+            # 모든 세션에 SetLog 없음 → 빈 effective_sessions → 신규 사용자.
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
+        assert "신규 사용자" in ctx
+        assert "최근 세션" not in ctx
 
     async def test_calendar_signals_hook_phase8(self) -> None:
         async def signals() -> CalendarSignals:
@@ -81,7 +104,7 @@ class TestBuild:
         b = CoachContextBuilder(
             profile_repo=AsyncMock(get=AsyncMock(return_value=_profile())),
             session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
-            set_repo=AsyncMock(),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
             condition_repo=AsyncMock(),
             routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
             calendar_signals_fn=signals,
@@ -102,7 +125,7 @@ class TestBuild:
         b = CoachContextBuilder(
             profile_repo=AsyncMock(get=AsyncMock(return_value=_profile())),
             session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
-            set_repo=AsyncMock(),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
             condition_repo=AsyncMock(),
             routine_repo=AsyncMock(list_all=AsyncMock(return_value=long_routines)),
         )

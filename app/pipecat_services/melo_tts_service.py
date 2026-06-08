@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 from loguru import logger
 from pipecat.frames.frames import Frame, TTSAudioRawFrame
+from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
 
 from app.adapters.tts.melo_client import MeloTTSClient
@@ -18,11 +19,19 @@ class MeloTTSService(TTSService):
     """Pipecat adapter wrapping `MeloTTSClient` — native sample rate (44.1kHz Korean)."""
 
     def __init__(self, client: MeloTTSClient, **kwargs) -> None:
+        # Pipecat 1.3+:
+        #  * push_start_frame=True — base class creates the audio context and
+        #    emits TTSStartedFrame before run_tts yields. Without this, our
+        #    TTSAudioRawFrame outputs never reach the transport.
+        #  * stop_frame_timeout_s=30.0 — Melo synthesises a full sentence per
+        #    yield (~5s first chunk on GPU), but Pipecat's default 3s queue-get
+        #    timeout would tear down the audio context before our first frame
+        #    arrives. 30s gives ample headroom for slower sentences.
         super().__init__(
             sample_rate=client.sample_rate,
-            model=None,
-            voice=None,
-            language=None,
+            settings=TTSSettings(model=None, voice=None, language=None),
+            push_start_frame=True,
+            stop_frame_timeout_s=30.0,
             **kwargs,
         )
         self._client = client

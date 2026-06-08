@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 
 from loguru import logger
 from pipecat.frames.frames import Frame, TranscriptionFrame
+from pipecat.services.settings import STTSettings
 from pipecat.services.stt_service import SegmentedSTTService
 from pipecat.utils.time import time_now_iso8601
 
@@ -17,8 +18,12 @@ class MockSTTService(SegmentedSTTService):
     """Fixed-transcription mock. Ignores audio bytes; always yields '테스트'."""
 
     def __init__(self, **kwargs) -> None:
-        # model=None / language=None satisfy STTSettings.validate_complete() without warning.
-        super().__init__(sample_rate=16000, model=None, language=None, **kwargs)
+        # Pipecat 1.3+: model/language live on STTSettings.
+        super().__init__(
+            sample_rate=16000,
+            settings=STTSettings(model=None, language=None),
+            **kwargs,
+        )
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame | None, None]:
         logger.debug("MockSTTService: transcribing {} bytes → '테스트'", len(audio))

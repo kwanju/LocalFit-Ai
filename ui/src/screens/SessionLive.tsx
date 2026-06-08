@@ -53,7 +53,7 @@ const MIC_MODES: readonly { mode: MicMode; label: string }[] = [
 ];
 
 export function SessionLive() {
-  const { status, mode, started, serverState, messages, counting, lastAudio, liveListening, actions } =
+  const { status, mode, started, serverState, messages, counting, audioQueue, liveListening, actions } =
     useSession();
   const audio = useAudio();
   const wakeLock = useWakeLock();
@@ -64,18 +64,33 @@ export function SessionLive() {
   const playingRef = useRef(audio.playing);
   playingRef.current = audio.playing;
 
+  // Lazy-connect on entering the workout screen. The provider lives at the app
+  // shell level (persists across tabs), so the socket only opens here and stays
+  // open when the user pops over to 기록/설정 (2026-06-08). Idempotent on re-entry.
+  useEffect(() => {
+    actions.ensureConnected();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isVoiceInput = VOICE_INPUT.has(mode);
   const isVoiceOutput = VOICE_OUTPUT.has(mode);
 
   // Play the coach's voice when one arrives (voice-output modes only send it).
-  // Phase-7: audio comes as PCM16LE (playPcm adds WAV header).
+  // 2026-06-07 sync: 매 audio chunk 가 실제 재생 시작될 때 beatMeta 가 있으면
+  // 카운터·세트 표시를 그 시점에 업데이트 (오디오 timeline 과 화면이 동기화됨).
   useEffect(() => {
-    if (lastAudio) {
-      void audio.playPcm(lastAudio.data, lastAudio.sampleRate);
-      actions.consumeAudio(lastAudio.seq);
+    if (audioQueue.length === 0) return;
+    // Drain the whole queue into the gapless WebAudio scheduler so no chunk is
+    // dropped (single-slot overwrite was losing count numbers, 2026-06-08).
+    for (const chunk of audioQueue) {
+      const meta = chunk.beatMeta;
+      audio.playPcm(chunk.data, chunk.sampleRate, {
+        onStart: meta ? () => actions.applyBeatMeta(meta) : undefined,
+      });
     }
+    actions.drainAudio(audioQueue[audioQueue.length - 1]!.seq);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAudio]);
+  }, [audioQueue]);
 
   // Keep the screen awake while counting (plank can run minutes). request/release
   // are stable; keying on wakeLock would re-request on every render (sentinel leak).
@@ -171,7 +186,20 @@ export function SessionLive() {
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
         <ModeSwitch current={mode} onSelect={handleModeSelect} />
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-3 text-xs">
+          <label className="flex items-center gap-1 text-slate-400" title="코치 음성 볼륨">
+            <span aria-hidden="true">{audio.volume === 0 ? "🔇" : "🔊"}</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(audio.volume * 100)}
+              onChange={(e) => audio.setVolume(Number(e.target.value) / 100)}
+              aria-label="코치 음성 볼륨"
+              className="h-1 w-20 accent-sky-500"
+            />
+          </label>
           <span className={status === "open" ? "text-emerald-400" : "text-amber-400"}>
             {STATUS_LABEL[status]}
           </span>
@@ -259,7 +287,9 @@ export function SessionLive() {
           <button
             type="button"
             onClick={() => actions.startSession()}
-            disabled={status !== "open"}
+            // After 세션 종료 the socket is "closed"; startSession reconnects, so
+            // only block while a (re)connect is mid-flight (2026-06-08).
+            disabled={status === "connecting" || status === "reconnecting"}
             className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white disabled:opacity-40"
           >
             세션 시작

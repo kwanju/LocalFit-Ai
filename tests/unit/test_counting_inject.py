@@ -2,19 +2,19 @@
 
 import asyncio
 
-from pipecat.frames.frames import TextFrame
+from pipecat.frames.frames import TextFrame, TTSSpeakFrame
 
 from app.core.counting import BeatEvent, CountingEngine, ExerciseMode
 from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
 
 
-async def test_inject_beat_pushes_text_frame() -> None:
-    """Non-empty cue in BeatEvent must result in TextFrame pushed downstream."""
+async def test_inject_beat_pushes_speak_frame() -> None:
+    """Non-empty cue → TTSSpeakFrame pushed downstream (즉시 개별 합성, 2026-06-08)."""
     inject_proc = CountingInjectProcessor()
-    captured: list[TextFrame] = []
+    captured: list[TTSSpeakFrame] = []
 
     async def mock_push(frame, direction=None) -> None:
-        if isinstance(frame, TextFrame):
+        if isinstance(frame, TTSSpeakFrame):
             captured.append(frame)
 
     inject_proc.push_frame = mock_push
@@ -27,12 +27,12 @@ async def test_inject_beat_pushes_text_frame() -> None:
 
 
 async def test_inject_beat_empty_cue_skipped() -> None:
-    """Empty cue must NOT produce a TextFrame."""
+    """Empty cue must NOT produce a cue frame."""
     inject_proc = CountingInjectProcessor()
-    captured: list[TextFrame] = []
+    captured: list[TTSSpeakFrame] = []
 
     async def mock_push(frame, direction=None) -> None:
-        if isinstance(frame, TextFrame):
+        if isinstance(frame, TTSSpeakFrame):
             captured.append(frame)
 
     inject_proc.push_frame = mock_push
@@ -57,12 +57,12 @@ async def test_attach_engine_wires_on_beat() -> None:
 
 
 async def test_full_engine_cues_reach_inject() -> None:
-    """Engine beats must drive inject_proc._inject_beat producing TextFrames."""
+    """Engine beats must drive inject_proc._inject_beat producing TTSSpeakFrames."""
     inject_proc = CountingInjectProcessor()
     received_texts: list[str] = []
 
     async def mock_push(frame, direction=None) -> None:
-        if isinstance(frame, TextFrame):
+        if isinstance(frame, TTSSpeakFrame):
             received_texts.append(frame.text)
 
     inject_proc.push_frame = mock_push
@@ -89,7 +89,7 @@ async def test_full_engine_cues_reach_inject() -> None:
 
 async def test_process_frame_passes_through() -> None:
     """process_frame must forward all non-beat frames unchanged."""
-    from pipecat.frames.frames import TextFrame
+    from pipecat.frames.frames import TextFrame, TTSSpeakFrame
     from pipecat.tests.utils import run_test
 
     inject_proc = CountingInjectProcessor()

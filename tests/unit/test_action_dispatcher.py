@@ -36,6 +36,7 @@ async def test_start_counting_invokes_callback() -> None:
     slot = ConfirmSlot()
     cb = AsyncMock()
     disp = ActionDispatcherProcessor(slot, start_counting=cb)
+    disp.allow_one_direct_start()  # 가드 우회 (사용자 확답 시뮬레이트)
     action = StartCountingAction(exercise="스쿼트", reps=12)
     await _drive(disp, [CoachActionFrame(action=action)])
     cb.assert_awaited_once()
@@ -63,6 +64,17 @@ async def test_callback_exception_swallowed() -> None:
     slot = ConfirmSlot()
     cb = AsyncMock(side_effect=RuntimeError("counting engine down"))
     disp = ActionDispatcherProcessor(slot, start_counting=cb)
+    disp.allow_one_direct_start()
     # should not raise
     await _drive(disp, [CoachActionFrame(action=StartCountingAction(exercise="풀업", reps=5))])
     cb.assert_awaited_once()
+
+
+async def test_start_counting_without_confirm_is_rejected() -> None:
+    """LLM이 사용자 확답 없이 start_counting을 발행하면 거부 (2026-06-07 가드)."""
+    slot = ConfirmSlot()
+    cb = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, start_counting=cb)
+    # allow_one_direct_start 호출 안 함 — 가드 활성 상태.
+    await _drive(disp, [CoachActionFrame(action=StartCountingAction(exercise="푸시업", reps=10))])
+    cb.assert_not_awaited()

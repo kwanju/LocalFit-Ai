@@ -162,16 +162,16 @@ class StructuredOllamaProcessor(FrameProcessor):
 def _is_user_input(frame: Frame) -> bool:
     """User-input frames the LLM should react to.
 
-    Subclasses of TextFrame that the pipeline itself produces (e.g.
-    ``SafetyResponseFrame``, ``LLMTextFrame``) must NOT trigger another LLM
-    call. We accept exactly: STT transcripts, UI text input, and plain
-    user-injected TextFrames (proactive opener uses ``InputTextRawFrame``).
+    Exactly: STT transcripts (``TranscriptionFrame``) and UI/injected user text
+    (``InputTextRawFrame``).  Plain ``TextFrame`` is *system text to speak* —
+    ConfirmRule acks ("시작할게요."), rest announcements ("3/3 세트 시작!"), and
+    beat cues — and must NOT wake the LLM.  Treating plain TextFrame as user
+    input caused the LLM to fire on every spoken cue during counting, starving
+    the GPU and timing out ("코치 연결 문제", 2026-06-08 fix).  System turns that
+    *should* drive the LLM (proactive opener, set-complete follow-up) are
+    injected as ``InputTextRawFrame`` by ws_voice for this reason.
     """
-    if isinstance(frame, TranscriptionFrame):
-        return True
-    if isinstance(frame, InputTextRawFrame):
-        return True
-    return type(frame) is TextFrame
+    return isinstance(frame, TranscriptionFrame | InputTextRawFrame)
 
 
 def _derive_openai_base(host: str) -> str:

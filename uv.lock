@@ -904,6 +904,23 @@ wheels = [
 ]
 
 [[package]]
+name = "faster-qwen3-tts"
+version = "0.2.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "qwen-tts" },
+    { name = "soundfile" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/31/d2709a56620f40768957b53d171397d148d3d62b7f2fd9d60d972d39acdc/faster_qwen3_tts-0.2.6.tar.gz", hash = "sha256:64aded127fdfa1c3bfc38e6e083b68a4cea720ef3e8958045886dca8226a6637", size = 75771, upload-time = "2026-04-17T14:01:29.157Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/20/5b274c5c5129640b08658519c930f8c123009fba1caca242b127393d3d07/faster_qwen3_tts-0.2.6-py3-none-any.whl", hash = "sha256:3881a41dc189f0a6e93fa047f376deffeb2fa84e888e7d570f79b3e2267765cc", size = 35058, upload-time = "2026-04-17T14:01:27.649Z" },
+]
+
+[[package]]
 name = "faster-whisper"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1885,6 +1902,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "fastapi" },
+    { name = "faster-qwen3-tts" },
     { name = "httpx" },
     { name = "instructor" },
     { name = "loguru" },
@@ -1922,6 +1940,7 @@ gpu = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "faster-qwen3-tts", specifier = ">=0.2.6" },
     { name = "faster-whisper", marker = "extra == 'gpu'", specifier = ">=1.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },

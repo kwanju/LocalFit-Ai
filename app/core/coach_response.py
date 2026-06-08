@@ -24,6 +24,9 @@ class StartCountingAction(BaseModel):
     type: Literal["start_counting"] = "start_counting"
     exercise: Exercise
     reps: int = Field(ge=1, le=100)
+    # 사용자 피드백 (2026-06-07): 단일 세트 말고 처음에 N세트·휴식까지 결정.
+    sets: int = Field(default=1, ge=1, le=10)
+    rest_sec: int = Field(default=60, ge=15, le=300)
 
 
 class LogConditionAction(BaseModel):

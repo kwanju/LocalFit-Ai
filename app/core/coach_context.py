@@ -70,8 +70,12 @@ def _routine_summary(routines) -> str:
 
 
 def _recent_sessions_summary(sessions) -> str:
+    """Summarise recent EFFECTIVE sessions (set_log이 1개 이상 있는 세션만).
+
+    필터는 호출자가 미리 적용 — 빈 리스트는 신규 사용자로 취급한다.
+    """
     if not sessions:
-        return "최근 운동 기록 없음"
+        return "신규 사용자 (운동 기록 없음)"
     return f"최근 세션 {len(sessions)}회 (가장 최근 {sessions[0].started_at:%m/%d %H시})"
 
 
@@ -96,7 +100,22 @@ class CoachContextBuilder:
     async def build(self, *, recent_sessions: int = 5, now: datetime | None = None) -> str:
         now = now or datetime.now()
         profile = await self.profile_repo.get()
-        sessions = await self.session_repo.get_recent(limit=recent_sessions)
+        # over-fetch raw sessions, then keep only those with at least one SetLog
+        # (연결만 하고 운동 안 한 세션은 LLM 컨텍스트에서 제외 — 신규 사용자 시나리오).
+        raw_sessions = await self.session_repo.get_recent(limit=recent_sessions * 4)
+        effective_sessions: list = []
+        for s in raw_sessions:
+            if s.id is None:
+                continue
+            try:
+                sl = await self.set_repo.get_by_session(s.id)
+            except Exception:  # noqa: BLE001 — best-effort
+                sl = []
+            if sl:
+                effective_sessions.append(s)
+                if len(effective_sessions) >= recent_sessions:
+                    break
+        sessions = effective_sessions
         routines = await self.routine_repo.list_all()
 
         latest_condition: str | None = None

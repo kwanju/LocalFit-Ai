@@ -1,65 +1,51 @@
-"""Beat cue pools for CountingEngine (ADR-014 §박자 멘트 풀).
+"""Beat cue pools for CountingEngine.
 
-All pools are plain constants — no external dependencies — so they live in
-``app.core`` (Domain Core).  ``pick_cue`` supports both random and sequential
-selection modes; pass an explicit ``random.Random`` instance for reproducible
-tests.
+사용자 피드백 (2026-06-04): 카운팅은 "하나, 둘, 셋…" 숫자만. 박자 멘트는 인지 부담만
+키운다. 격려 멘트(`ENCOURAGEMENT_CUES`)는 1/3, 2/3, 마지막 시점에만 끼워서 1렙 단위
+모노톤 카운팅의 단조로움을 깬다. 플랭크(timer)는 "{N}초!" 카운트다운 유지.
+
+NOTE: 메트로놈 모드 카운팅은 ``CountingEngine._select_metronome_cue``가 ``rep`` 번호로
+직접 ``_KOREAN_REP_NAMES`` 를 인덱스해서 cue를 만든다. 그래서 ``BEAT_CUES`` 의 metronome
+운동 항목은 의도적으로 비워둠.
 """
 
 from __future__ import annotations
 
 import random as _random_mod
 
-# ADR-014 §박자 멘트 풀: 운동·구간별 cue 풀 (각 5종)
+# 한국어 순서 명. 1~20렙은 고유어, 21+는 "21회" 등 한자어 fallback.
+_KOREAN_REP_NAMES: tuple[str, ...] = (
+    "하나", "둘", "셋", "넷", "다섯",
+    "여섯", "일곱", "여덟", "아홉", "열",
+    "열하나", "열둘", "열셋", "열넷", "열다섯",
+    "열여섯", "열일곱", "열여덟", "열아홉", "스물",
+)
+
+
+def count_word(rep: int) -> str:
+    """렙 번호 → 카운팅 cue. 1-indexed (1 → "하나", 20 → "스물", 21+ → "21회")."""
+    if rep < 1:
+        return ""
+    if rep <= len(_KOREAN_REP_NAMES):
+        return f"{_KOREAN_REP_NAMES[rep - 1]}!"
+    return f"{rep}회!"
+
+
+# 세트 서수 — TTS가 "2/3"을 "삼분의이"로 읽는 문제 방지 (2026-06-08). "두 번째" 등 native 서수.
+_KOREAN_ORDINALS: tuple[str, ...] = (
+    "첫", "두", "세", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열",
+)
+
+
+def set_ordinal(n: int) -> str:
+    """세트 번호 → 한국어 서수 ("첫 번째", "두 번째", … 11+ → "11번째")."""
+    if 1 <= n <= len(_KOREAN_ORDINALS):
+        return f"{_KOREAN_ORDINALS[n - 1]} 번째"
+    return f"{n}번째"
+
+
+# 플랭크(timer) tick cue 풀. 메트로놈 운동은 ``count_word`` 로 직접 처리.
 BEAT_CUES: dict[str, dict[str, list[str]]] = {
-    "풀업": {
-        "up": [
-            "올라가요!",
-            "당기세요!",
-            "끌어올려요!",
-            "한 번 더 당겨요!",
-            "꽉 잡고!",
-        ],
-        "down": [
-            "내려오세요",
-            "천천히",
-            "컨트롤",
-            "버티며 내려요",
-            "긴장 유지",
-        ],
-    },
-    "푸시업": {
-        "down": [
-            "내려가요!",
-            "천천히",
-            "가슴까지!",
-            "버티며",
-            "코어 단단히",
-        ],
-        "up": [
-            "올라와요!",
-            "밀어내요!",
-            "쭉 펴서!",
-            "한 번 더!",
-            "끝까지!",
-        ],
-    },
-    "스쿼트": {
-        "down": [
-            "앉아요!",
-            "엉덩이 뒤로!",
-            "허벅지 평행!",
-            "천천히",
-            "무릎 발끝 방향!",
-        ],
-        "up": [
-            "올라와요!",
-            "쭉 펴서!",
-            "엉덩이 조여요!",
-            "발바닥 전체로!",
-            "한 번 더!",
-        ],
-    },
     "플랭크": {
         "tick": [
             "{N}초!",
@@ -90,12 +76,16 @@ ENCOURAGEMENT_CUES: dict[str, list[str]] = {
     ],
 }
 
-_FALLBACK_BEAT: list[str] = ["준비", "버텨요", "계속", "좋아요", "한 번 더"]
+_FALLBACK_BEAT: list[str] = []  # 메트로놈은 count_word 직접 사용, fallback 미사용
 _FALLBACK_ENC: list[str] = ["잘하고 있어요!", "조금만 더!", "완성!"]
 
 
 def get_beat_pool(exercise: str, phase: str) -> list[str]:
-    """Return the cue pool for *exercise* + *phase*; falls back to a default pool."""
+    """Return the cue pool for *exercise* + *phase*; falls back to a default pool.
+
+    Metronome 운동에서는 ``CountingEngine``이 ``count_word`` 로 직접 cue를 만들고
+    이 함수는 ``tick`` (플랭크) 에서만 의미가 있음.
+    """
     return BEAT_CUES.get(exercise, {}).get(phase, _FALLBACK_BEAT)
 
 

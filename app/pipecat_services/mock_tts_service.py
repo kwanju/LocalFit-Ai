@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 
 from loguru import logger
 from pipecat.frames.frames import Frame, TTSAudioRawFrame
+from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
 
 _SAMPLE_RATE = 16000
@@ -20,7 +21,12 @@ class MockTTSService(TTSService):
     """Silent-PCM mock. Ignores text; yields one 100ms silent TTSAudioRawFrame."""
 
     def __init__(self, **kwargs) -> None:
-        super().__init__(sample_rate=_SAMPLE_RATE, **kwargs)
+        super().__init__(
+            sample_rate=_SAMPLE_RATE,
+            settings=TTSSettings(model=None, voice=None, language=None),
+            push_start_frame=True,
+            **kwargs,
+        )
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
         logger.debug("MockTTSService: synthesising '{}' → 100ms silence", text)

@@ -36,22 +36,36 @@ export function CountingDisplay({ counting }: { counting: CountingState }) {
   }
 
   const isTimer = counting.exerciseMode === "timer";
-  const bigValue = isTimer ? Math.floor(counting.elapsedSec) : counting.rep;
-  const unit = isTimer ? "초" : "회";
+  const isResting = counting.restRemainingSec !== null;
+  const bigValue = isResting
+    ? counting.restRemainingSec
+    : isTimer
+      ? Math.floor(counting.elapsedSec)
+      : counting.rep;
+  const unit = isResting ? "초 휴식" : isTimer ? "초" : "회";
+  const valueClass = isResting ? "text-amber-400" : "text-sky-400";
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4">
+      {counting.totalSets > 0 && (
+        <span className="rounded-full bg-slate-800 px-4 py-1 text-sm font-semibold text-slate-300">
+          세트 {Math.min(counting.setNumber, counting.totalSets)}/{counting.totalSets}
+        </span>
+      )}
       <div className="flex items-baseline gap-3">
-        <span className="text-count font-black tabular-nums text-sky-400">{bigValue}</span>
+        <span className={`text-count font-black tabular-nums ${valueClass}`}>{bigValue}</span>
         <span className="text-3xl text-slate-400">{unit}</span>
       </div>
-      {!isTimer && counting.phase && (
+      {!isResting && !isTimer && counting.phase && (
         <span className="rounded-full bg-slate-800 px-6 py-2 text-2xl font-semibold text-slate-200">
           {PHASE_LABEL[counting.phase]}
         </span>
       )}
-      {isTimer && (
+      {!isResting && isTimer && (
         <span className="text-xl text-slate-400">{counting.elapsedSec.toFixed(1)}초 경과</span>
+      )}
+      {isResting && (
+        <span className="text-base text-slate-400">다음 세트까지 잠시 휴식</span>
       )}
     </div>
   );

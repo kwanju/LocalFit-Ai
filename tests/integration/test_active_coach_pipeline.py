@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from pipecat.frames.frames import TextFrame
+from pipecat.frames.frames import InputTextRawFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.tests.utils import run_test
 
@@ -68,7 +68,7 @@ async def test_user_says_start_pushup_dispatches_start_counting() -> None:
     )
 
     pipeline = _build_coach_pipeline(llm, slot, start_counting_cb=cb)
-    await run_test(pipeline, frames_to_send=[TextFrame(text="푸시업 10개 시작하자")])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="푸시업 10개 시작하자")])
 
     cb.assert_awaited_once()
     assert cb.call_args.args[0].exercise == "푸시업"
@@ -129,7 +129,7 @@ async def test_proactive_opener_message_triggers_llm() -> None:
     )
 
     pipeline = _build_coach_pipeline(llm, slot)
-    await run_test(pipeline, frames_to_send=[TextFrame(text=PROACTIVE_OPENER_USER_MESSAGE)])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text=PROACTIVE_OPENER_USER_MESSAGE)])
 
     create.assert_awaited_once()
     # the proposal landed in the slot

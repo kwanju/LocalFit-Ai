@@ -62,6 +62,7 @@ def build_pipeline(
     confirm_slot: ConfirmSlot | None = None,
     counting_inject: FrameProcessor | None = None,
     ui_control: FrameProcessor | None = None,
+    ui_text_broadcast: FrameProcessor | None = None,
 ) -> Pipeline:
     """Build a mode-specific Pipecat pipeline.
 
@@ -82,6 +83,10 @@ def build_pipeline(
             ActionDispatcher and SentenceAggregator. Omit for non-counting tests.
         ui_control: Phase-7 ``UIControlProcessor`` — inserted right after
             transport.input() to intercept UI control messages before the LLM.
+        ui_text_broadcast: ``UITextBroadcastProcessor`` — sits between
+            ActionDispatcher and CountingInject so coach TextFrames are mirrored
+            to the UI as OutputTransportMessageFrame (Pipecat 1.3 transports
+            don't auto-forward TextFrames to the wire).
     """
     if isinstance(mode, str):
         mode = SessionMode(mode.upper())
@@ -117,15 +122,27 @@ def build_pipeline(
     processors.append(llm)
     processors.append(dispatcher)
 
-    # ADR-014 phase-6: counting beat inject (between dispatcher and TTS).
-    if counting_inject is not None:
-        processors.append(counting_inject)
+    # Mirror LLM/safety TextFrames to the UI as OutputTransportMessageFrame.
+    # MUST sit BEFORE counting_inject so beat-cue TextFrames aren't double-broadcast
+    # (CountingInject already emits a dedicated `beat` message).
+    if ui_text_broadcast is not None:
+        processors.append(ui_text_broadcast)
 
     if use_tts:
         # Sentence-batch TTS (ADR-006): SentenceAggregator buffers streaming
         # TextFrames into sentence-sized chunks before they hit the TTS service.
         processors.append(SentenceAggregator())
+        # ADR-014: counting beat inject sits AFTER the aggregator (2026-06-07 fix).
+        # Beat cues ("하나!") are atomic, beat-synced utterances; if they share the
+        # aggregator buffer with streaming LLM text they get concatenated into one
+        # synth ("하나!1세트 시작합니다!"). Injecting post-aggregator sends each cue
+        # straight to TTS as its own run_tts call, decoupled from LLM aggregation.
+        if counting_inject is not None:
+            processors.append(counting_inject)
         processors.append(tts)
+    elif counting_inject is not None:
+        # Non-TTS modes have no aggregator; cue TextFrames flow to the UI inline.
+        processors.append(counting_inject)
 
     processors.append(transport.output())
 

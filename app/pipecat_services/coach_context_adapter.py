@@ -69,21 +69,31 @@ class DBCoachContextAdapter:
         sessions_4w = await session_repo.get_range(from_4w, today)
         sessions_30d = await session_repo.get_range(from_30d, today)
 
-        session_ids_30d = [s.id for s in sessions_30d if s.id is not None]
+        # SetLog가 없는 세션(연결만 하고 운동 안 한 세션)은 실제 운동 history가 아니므로
+        # 패턴/streak/마지막운동일 계산에서 제외 (사용자 피드백 2026-06-04).
+        all_session_ids = list(
+            {s.id for s in (*sessions_4w, *sessions_30d) if s.id is not None}
+        )
         set_logs_by_session: dict[int, list] = {}
-        if session_ids_30d:
-            for sl in await set_repo.get_by_sessions(session_ids_30d):
+        if all_session_ids:
+            for sl in await set_repo.get_by_sessions(all_session_ids):
                 set_logs_by_session.setdefault(sl.session_id, []).append(sl)
+
+        def _has_sets(s) -> bool:
+            return s.id is not None and bool(set_logs_by_session.get(s.id))
+
+        effective_4w = [s for s in sessions_4w if _has_sets(s)]
+        effective_30d = [s for s in sessions_30d if _has_sets(s)]
 
         all_exercises = await ex_repo.get_all()
         ex_names_by_id = {ex.id: ex.name for ex in all_exercises if ex.id is not None}
 
         try:
-            weekly_pattern = compute_weekly_pattern(sessions_4w)
+            weekly_pattern = compute_weekly_pattern(effective_4w)
             last_exercise = compute_last_exercise_dates(
-                sessions_30d, set_logs_by_session, ex_names_by_id
+                effective_30d, set_logs_by_session, ex_names_by_id
             )
-            rest_streak = detect_rest_streak(sessions_30d)
+            rest_streak = detect_rest_streak(effective_30d)
         except Exception as exc:  # noqa: BLE001 — calendar signals are best-effort
             logger.warning("calendar_signals computation failed: {}", exc)
             return CalendarSignals()

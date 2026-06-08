@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
-from app.api import calendar, health, onboarding, routine, session, ws_voice
+from app.api import admin, calendar, health, onboarding, routine, session, ws_voice
 from app.config import AppConfig, load_config
 from app.db.engine import init_db
 from app.utils.logging import setup_logging
@@ -55,9 +55,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.config = None
     app.state.llm = None
     app.state.stt = None
-    app.state.stt_service = None    # Pipecat STTService bound to FasterWhisperClient (ADR-005)
     app.state.tts = None
-    app.state.tts_service = None    # Pipecat TTSService bound to the active client (ADR-006)
+    # Pipecat *Service 인스턴스는 ws_voice가 매 연결마다 새로 만든다 (service_factory).
+    # FrameProcessor는 단일 파이프라인 lifecycle에 묶이므로 공유 불가.
     # VAD adapter: Pipecat SileroVADAnalyzer is constructed per ws_voice session
     # (ADR-007/011); no separate lifespan-loaded VAD adapter is needed.
 
@@ -82,40 +82,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.stt = _load_adapter("STT", get_stt_adapter, config)
     app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
 
-    # Bind the FasterWhisperClient to its Pipecat service (ADR-005/012). The
-    # heavy `WhisperModel.load` already happened in get_stt_adapter; the service
-    # wraps it so ws_voice can mount the same instance per connection.
-    if app.state.stt is not None:
-        try:
-            from app.adapters.stt.faster_whisper_client import FasterWhisperClient
-            from app.pipecat_services.whisper_service import LocalFitWhisperSTTService
-
-            if isinstance(app.state.stt, FasterWhisperClient):
-                app.state.stt_service = LocalFitWhisperSTTService(app.state.stt)
-                logger.info("STT pipecat service bound: LocalFitWhisperSTTService")
-        except Exception as e:  # noqa: BLE001 — adapter present but Pipecat bind failed
-            logger.error("STT pipecat service bind failed: {}", e)
-
-    # Bind the active TTS client to its Pipecat service so ws_voice can mount
-    # the same instance per connection (model load happens once at lifespan).
-    if app.state.tts is not None:
-        try:
-            from app.adapters.tts.qwen3_client import Qwen3TTSClient
-
-            if isinstance(app.state.tts, Qwen3TTSClient):
-                from app.pipecat_services.qwen3_tts_service import Qwen3TTSService
-
-                app.state.tts_service = Qwen3TTSService(app.state.tts)
-            else:
-                from app.adapters.tts.melo_client import MeloTTSClient
-                from app.pipecat_services.melo_tts_service import MeloTTSService
-
-                if isinstance(app.state.tts, MeloTTSClient):
-                    app.state.tts_service = MeloTTSService(app.state.tts)
-            logger.info("TTS pipecat service bound: {}", type(app.state.tts_service).__name__)
-        except Exception as e:  # noqa: BLE001 — adapter present but Pipecat bind failed
-            logger.error("TTS pipecat service bind failed: {}", e)
-
     if app.state.llm is not None:
         await app.state.llm.warmup()  # type: ignore[attr-defined]
 
@@ -129,6 +95,7 @@ app.include_router(session.router)
 app.include_router(routine.router)
 app.include_router(onboarding.router)
 app.include_router(calendar.router)
+app.include_router(admin.router)
 app.include_router(ws_voice.router)
 
 

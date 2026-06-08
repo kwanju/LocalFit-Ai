@@ -9,6 +9,7 @@ from enum import StrEnum
 from loguru import logger
 
 from app.core.counting_cues import (
+    count_word,
     get_beat_pool,
     get_encouragement_pool,
     pick_cue,
@@ -27,6 +28,10 @@ class BeatEvent:
     phase: str        # "up" | "down" (metronome) | "tick" (timer)
     elapsed_sec: float
     cue: str = ""     # beat or encouragement text (phase-6 addition)
+    # 2026-06-07 sync 개선용: UI가 audio msg와 짝지을 때 카운트/격려 구분.
+    cue_kind: str = "count"      # "count" | "encouragement" | "tick" | ""
+    set_number: int = 1          # 현재 진행 중인 세트 (1-indexed)
+    total_sets: int = 1
 
 
 @dataclass
@@ -57,6 +62,9 @@ class CountingEngine:
         start_delay_sec: float = 0.0,
         encouragement_points: list[float] | None = None,
         rng_seed: int | None = None,
+        # 2026-06-07: multi-set sync용. CountingManager가 매 세트 fresh engine을 만들 때 세트 정보 주입.
+        set_number: int = 1,
+        total_sets: int = 1,
     ) -> None:
         self._mode = mode
         self._interval_sec = interval_sec
@@ -68,6 +76,8 @@ class CountingEngine:
         self._start_delay_sec = start_delay_sec
         self._encouragement_points: list[float] = sorted(encouragement_points or [])
         self._rng = random.Random(rng_seed)
+        self._set_number = set_number
+        self._total_sets = total_sets
 
         self._rep: int = 0
         self._phase: str = "up"
@@ -77,6 +87,9 @@ class CountingEngine:
         # Cue state (phase-6)
         self._seq_counters: dict[str, int] = {}
         self._fired_enc: set[int] = set()  # indices of already-fired encouragement points
+        # cue_kind 추적용 — 마지막 _select_*_cue 호출이 격려를 골랐는지 카운트를 골랐는지
+        # _metronome_tick / _timer_tick 가 BeatEvent에 실어 보낼 수 있도록.
+        self._last_cue_kind: str = "count"
 
         # on_complete is settable after construction (phase-6)
         self.on_complete: Callable[[CompleteEvent], Awaitable[None]] | None = None
@@ -147,7 +160,15 @@ class CountingEngine:
     async def _metronome_tick(self) -> None:
         cue = self._select_metronome_cue()
         await self._on_beat(
-            BeatEvent(rep=self._rep, phase=self._phase, elapsed_sec=self.elapsed_sec, cue=cue)
+            BeatEvent(
+                rep=self._rep,
+                phase=self._phase,
+                elapsed_sec=self.elapsed_sec,
+                cue=cue,
+                cue_kind=self._last_cue_kind,
+                set_number=self._set_number,
+                total_sets=self._total_sets,
+            )
         )
         if self._phase == "down":
             self._rep += 1
@@ -163,7 +184,17 @@ class CountingEngine:
     async def _timer_tick(self) -> None:
         elapsed = self.elapsed_sec
         cue = self._select_timer_cue(elapsed)
-        await self._on_beat(BeatEvent(rep=0, phase="tick", elapsed_sec=elapsed, cue=cue))
+        await self._on_beat(
+            BeatEvent(
+                rep=0,
+                phase="tick",
+                elapsed_sec=elapsed,
+                cue=cue,
+                cue_kind=self._last_cue_kind,
+                set_number=self._set_number,
+                total_sets=self._total_sets,
+            )
+        )
         if self._target_duration_sec is not None and elapsed >= self._target_duration_sec:
             logger.info("CountingEngine: target duration reached (%.1fs)", elapsed)
             await self._fire_complete(duration_sec=elapsed)
@@ -186,19 +217,28 @@ class CountingEngine:
     # --- cue selection helpers ---
 
     def _select_metronome_cue(self) -> str:
-        # Check encouragement at "down" phase (rep increment point)
-        if self._phase == "down" and self._max_reps > 0 and self._encouragement_points:
-            next_rep = self._rep + 1
+        # 메트로놈 모드: "up"은 묵음(빈 cue → 오디오 송신 생략), "down"에서 다음 rep을 카운트.
+        # "down" 시점에는 격려가 우선 — 1/3, 2/3, 마지막 시점이 트리거되면 격려 멘트로 대체.
+        if self._phase != "down":
+            self._last_cue_kind = ""
+            return ""
+
+        next_rep = self._rep + 1
+        if self._max_reps > 0 and self._encouragement_points:
             progress = next_rep / self._max_reps
             for i, threshold in enumerate(self._encouragement_points):
                 if progress >= threshold and i not in self._fired_enc:
                     self._fired_enc.add(i)
                     pool_key = _ENC_POOL_KEYS[min(i, len(_ENC_POOL_KEYS) - 1)]
-                    pool = get_encouragement_pool(pool_key)
-                    return self._pick(pool, f"enc_{pool_key}")
+                    enc = self._pick(get_encouragement_pool(pool_key), f"enc_{pool_key}")
+                    # 격려는 숫자를 *대체*가 아니라 *덧붙인다* — "넷! 좋아요, 호흡 유지!"
+                    # (2026-06-07 fix: 격려 시점에 넷·일곱·열이 통째로 빠지던 문제).
+                    # cue_kind는 count 유지 → UI 카운터도 정상 증가/표시.
+                    self._last_cue_kind = "count"
+                    return f"{count_word(next_rep)} {enc}".strip()
 
-        pool = get_beat_pool(self._exercise_name, self._phase)
-        return self._pick(pool, f"beat_{self._phase}")
+        self._last_cue_kind = "count"
+        return count_word(next_rep)
 
     def _select_timer_cue(self, elapsed: float) -> str:
         target = self._target_duration_sec or 0.0
@@ -212,9 +252,11 @@ class CountingEngine:
                     self._fired_enc.add(i)
                     pool_key = _ENC_POOL_KEYS[min(i, len(_ENC_POOL_KEYS) - 1)]
                     pool = get_encouragement_pool(pool_key)
+                    self._last_cue_kind = "encouragement"
                     return self._pick(pool, f"enc_{pool_key}")
 
         pool = get_beat_pool(self._exercise_name, "tick")
+        self._last_cue_kind = "tick"
         return self._pick(pool, "beat_tick", remaining_sec=remaining)
 
     def _pick(self, pool: list[str], counter_key: str, **kw: float | None) -> str:

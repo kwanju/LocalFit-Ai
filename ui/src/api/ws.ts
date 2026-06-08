@@ -55,6 +55,11 @@ export class CoachSocket {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  /** True while a socket exists (connecting OR open) — guards against duplicate connects. */
+  get isActive(): boolean {
+    return this.ws !== null;
+  }
+
   private open(): void {
     this.handlers.onStatus(this.attempt === 0 ? "connecting" : "reconnecting");
     const ws = new WebSocket(resolveUrl(this._mode));
@@ -175,9 +180,20 @@ export class CoachSocket {
   }
 
   end(): void {
-    if (!this.isOpen) return;
-    this.rawSend({ type: "end" });
     // Mark intentional so onclose doesn't trigger auto-reconnect.
     this.intentionalClose = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // Best-effort notify, then CLOSE the socket. Closing is what triggers the
+    // backend `on_client_disconnected` cleanup (stop counting, end DB session,
+    // send session_ended). Without the close the pipeline lingered and the UI
+    // never reset `started` → "세션 종료가 안 됨" (2026-06-08 fix).
+    if (this.isOpen) this.rawSend({ type: "end" });
+    this.ws?.close();
+    this.ws = null;
+    this.outbox.length = 0;
+    this.handlers.onStatus("closed");
   }
 }

@@ -109,9 +109,13 @@ async def test_serialize_unknown_frame_returns_none(serializer: JsonFrameSeriali
 
 @pytest.mark.asyncio
 async def test_deserialize_text(serializer: JsonFrameSerializer) -> None:
+    from pipecat.frames.frames import InputTextRawFrame
+
     raw = json.dumps({"type": "text", "text": "스쿼트 시작해 주세요"})
     frame = await serializer.deserialize(raw)
-    assert isinstance(frame, TextFrame)
+    # 채팅 입력은 InputTextRawFrame 이어야 SafetyGuard/ConfirmRule 이 '사용자 입력'으로
+    # 처리한다 (2026-06-08 fix: 순수 TextFrame 이면 채팅 확답·안전 키워드가 무시됨).
+    assert type(frame) is InputTextRawFrame, f"expected InputTextRawFrame, got {type(frame)}"
     assert frame.text == "스쿼트 시작해 주세요"
 
 

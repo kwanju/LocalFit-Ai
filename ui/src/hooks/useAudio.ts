@@ -1,14 +1,19 @@
-// Audio I/O for voice modes (phase-5C).
-//  - Playback: decode the coach's base64 WAV and play it (interruptible).
-//  - Capture: record the mic and return a 16kHz mono WAV. The STT adapter does
-//    NOT resample (known constraint), so we resample to 16kHz here before
-//    sending — otherwise transcription is garbled.
+// Audio I/O for voice modes (phase-5C, 2026-06-07 개정).
+//  - Playback: WebAudio queue로 PCM chunk를 gap 없이 이어 재생.
+//    GainNode로 볼륨 조절. AudioContext는 처음 chunk가 도착할 때 lazy 생성.
+//  - Capture: mic → 16kHz mono PCM (STT 어댑터는 resample 안 함).
+//
+// 이전 구현은 chunk 마다 새 <audio> 엘리먼트 생성 + stopPlayback() 호출이라
+// 코치 음성이 끊겨 들리는 문제가 있었음. WebAudio AudioBufferSourceNode를
+// 순차 스케줄링해서 끊김 제거.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const TARGET_SAMPLE_RATE = 16000;
 // Live streaming: emit ~128ms chunks (a few VAD windows' worth) to the backend.
 const STREAM_CHUNK_MS = 128;
+// 최소 lookahead — chunk를 너무 빨리 schedule하면 underrun이 일어날 수 있다.
+const SCHEDULE_LOOKAHEAD_SEC = 0.05;
 
 // Inline AudioWorklet: forwards each render quantum of mono PCM to the main
 // thread. Inlined as a Blob so no separate static asset is needed.
@@ -37,6 +42,15 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+function pcm16ToFloat32(pcmBytes: Uint8Array): Float32Array {
+  const view = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+  const samples = new Float32Array(pcmBytes.byteLength >> 1);
+  for (let i = 0; i < samples.length; i += 1) {
+    samples[i] = view.getInt16(i * 2, true) / 0x8000;
+  }
+  return samples;
 }
 
 function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
@@ -102,34 +116,15 @@ function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   return new Uint8Array(buffer);
 }
 
-// Add WAV header to raw PCM16LE bytes from Pipecat TTS output (phase-7).
-function pcm16ToWav(pcmBytes: Uint8Array, sampleRate: number, channels: number): Uint8Array {
-  const header = new ArrayBuffer(44);
-  const view = new DataView(header);
-  const ws = (offset: number, s: string) =>
-    s.split("").forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
-  ws(0, "RIFF");
-  view.setUint32(4, 36 + pcmBytes.length, true);
-  ws(8, "WAVE");
-  ws(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * channels * 2, true);
-  view.setUint16(32, channels * 2, true);
-  view.setUint16(34, 16, true);
-  ws(36, "data");
-  view.setUint32(40, pcmBytes.length, true);
-  const wav = new Uint8Array(44 + pcmBytes.length);
-  wav.set(new Uint8Array(header));
-  wav.set(pcmBytes, 44);
-  return wav;
-}
-
 export interface RecordedAudio {
   audioB64: string;
   sampleRate: number;
+}
+
+/** Optional metadata that comes piggybacked on an audio chunk from the backend. */
+export interface PlayPcmMeta {
+  /** Called when this chunk actually starts playing (scheduled time fires). */
+  onStart?: () => void;
 }
 
 interface UseAudio {
@@ -137,8 +132,10 @@ interface UseAudio {
   recording: boolean;
   streaming: boolean;
   micError: string | null;
+  volume: number;
+  setVolume: (v: number) => void;
   playWav: (b64: string) => Promise<void>;
-  playPcm: (pcmB64: string, sampleRate: number) => Promise<void>;
+  playPcm: (pcmB64: string, sampleRate: number, meta?: PlayPcmMeta) => void;
   stopPlayback: () => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<RecordedAudio | null>;
@@ -146,13 +143,72 @@ interface UseAudio {
   stopStreaming: () => Promise<void>;
 }
 
+const VOLUME_KEY = "localfit:volume";
+
+function readSavedVolume(): number {
+  try {
+    const raw = window.localStorage.getItem(VOLUME_KEY);
+    if (raw == null) return 1;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
 export function useAudio(): UseAudio {
+  // -- WAV playback (legacy, used by sendAudio C2S path -- left untouched) -----
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const [playing, setPlaying] = useState(false);
 
+  // -- WebAudio streaming queue (coach voice) ---------------------------------
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
+  const nextStartTimeRef = useRef(0);
+  const liveSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const playingTimeoutRef = useRef<number | null>(null);
+
+  const [playing, setPlaying] = useState(false);
+  const [volume, setVolumeState] = useState<number>(() => readSavedVolume());
+
+  // Volume persisted; whenever it changes, update the gain node too.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VOLUME_KEY, String(volume));
+    } catch {
+      /* ignore quota errors */
+    }
+    const g = gainRef.current;
+    if (g) g.gain.value = volume;
+  }, [volume]);
+
+  const setVolume = useCallback((v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setVolumeState(clamped);
+  }, []);
+
+  const ensureAudioContext = useCallback((sampleRateHint?: number): AudioContext => {
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      return audioCtxRef.current;
+    }
+    // Match the incoming sample rate when possible to avoid resampling artefacts.
+    type Ctor = new (opts?: AudioContextOptions) => AudioContext;
+    const Ctx = (window.AudioContext ?? (window as { webkitAudioContext?: Ctor }).webkitAudioContext) as Ctor;
+    const ctx = sampleRateHint
+      ? new Ctx({ sampleRate: sampleRateHint })
+      : new Ctx();
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    gain.connect(ctx.destination);
+    audioCtxRef.current = ctx;
+    gainRef.current = gain;
+    nextStartTimeRef.current = ctx.currentTime;
+    return ctx;
+  }, [volume]);
+
+  // -- Mic capture state ------------------------------------------------------
   const streamRef = useRef<MediaStream | null>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
+  const captureCtxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
   const chunksRef = useRef<Float32Array[]>([]);
   const captureRateRef = useRef(TARGET_SAMPLE_RATE);
@@ -165,6 +221,7 @@ export function useAudio(): UseAudio {
   const [streaming, setStreaming] = useState(false);
 
   const stopPlayback = useCallback(() => {
+    // Halt the legacy <audio> path (still used by playWav for full WAVs).
     const el = audioElRef.current;
     if (el) {
       el.pause();
@@ -173,6 +230,23 @@ export function useAudio(): UseAudio {
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
+    }
+    // Halt the WebAudio queue.
+    for (const src of liveSourcesRef.current) {
+      try {
+        src.stop(0);
+      } catch {
+        /* already stopped */
+      }
+      src.disconnect();
+    }
+    liveSourcesRef.current.clear();
+    if (audioCtxRef.current) {
+      nextStartTimeRef.current = audioCtxRef.current.currentTime;
+    }
+    if (playingTimeoutRef.current !== null) {
+      window.clearTimeout(playingTimeoutRef.current);
+      playingTimeoutRef.current = null;
     }
     setPlaying(false);
   }, []);
@@ -185,6 +259,8 @@ export function useAudio(): UseAudio {
       objectUrlRef.current = url;
       const el = audioElRef.current ?? new Audio();
       audioElRef.current = el;
+      // Mirror the GainNode volume on the <audio> element as best we can.
+      el.volume = volume;
       el.src = url;
       el.onended = () => {
         setPlaying(false);
@@ -199,17 +275,70 @@ export function useAudio(): UseAudio {
         setPlaying(false);
       }
     },
-    [stopPlayback],
+    [stopPlayback, volume],
   );
 
-  // Play raw PCM16LE audio from Pipecat TTS (phase-7: adds WAV header).
+  // Play raw PCM16LE audio from Pipecat TTS as a gap-less queue.
+  //  - Schedules each chunk on a single WebAudio timeline so consecutive chunks
+  //    play seamlessly (no <audio>-element restarts).
+  //  - `meta.onStart` fires the moment the chunk actually starts playing —
+  //    used by the counter UI to sync rep display with the spoken count.
   const playPcm = useCallback(
-    async (pcmB64: string, sampleRate: number) => {
-      const pcmBytes = base64ToBytes(pcmB64);
-      const wav = pcm16ToWav(pcmBytes, sampleRate, 1);
-      await playWav(bytesToBase64(wav));
+    (pcmB64: string, sampleRate: number, meta?: PlayPcmMeta) => {
+      const ctx = ensureAudioContext(sampleRate);
+      // AudioContext is "suspended" until first user gesture on most browsers.
+      // We optimistically resume; if it fails (no user gesture yet), audio stays
+      // queued but won't play until the next user click. That's a known
+      // browser policy, not a bug.
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+
+      const samples = pcm16ToFloat32(base64ToBytes(pcmB64));
+      // Backend may stream at e.g. 44.1kHz (MeloTTS) while the context might be
+      // anchored to a different rate from the very first chunk. Use the chunk's
+      // declared rate when building the AudioBuffer; WebAudio resamples on play.
+      const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+      // `copyToChannel` 의 TS 시그니처가 `Float32Array<ArrayBuffer>` 만 받으므로
+      // (`Float32Array<ArrayBufferLike>` 가 아닌) channelData.set() 으로 직접 복사.
+      buffer.getChannelData(0).set(samples);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gain = gainRef.current ?? ctx.destination;
+      source.connect(gain);
+
+      const now = ctx.currentTime;
+      const startTime = Math.max(now + SCHEDULE_LOOKAHEAD_SEC, nextStartTimeRef.current);
+      source.start(startTime);
+      nextStartTimeRef.current = startTime + buffer.duration;
+
+      liveSourcesRef.current.add(source);
+      setPlaying(true);
+
+      if (meta?.onStart) {
+        // Fire onStart at the scheduled playback time so the UI counter and the
+        // spoken word land together. AudioContext.currentTime is monotonic, so
+        // setTimeout against the wall clock is fine as a rough approximation.
+        const delayMs = Math.max(0, (startTime - now) * 1000);
+        window.setTimeout(meta.onStart, delayMs);
+      }
+
+      source.onended = () => {
+        liveSourcesRef.current.delete(source);
+        source.disconnect();
+        // Defer the "stopped playing" flip slightly so back-to-back chunks
+        // don't toggle `playing` off→on→off and confuse the half-duplex gate.
+        if (playingTimeoutRef.current !== null) {
+          window.clearTimeout(playingTimeoutRef.current);
+        }
+        playingTimeoutRef.current = window.setTimeout(() => {
+          playingTimeoutRef.current = null;
+          if (liveSourcesRef.current.size === 0) setPlaying(false);
+        }, 50);
+      };
     },
-    [playWav],
+    [ensureAudioContext],
   );
 
   const startRecording = useCallback(async () => {
@@ -220,7 +349,7 @@ export function useAudio(): UseAudio {
       });
       streamRef.current = stream;
       const ctx = new AudioContext();
-      ctxRef.current = ctx;
+      captureCtxRef.current = ctx;
       captureRateRef.current = ctx.sampleRate;
       const blobUrl = URL.createObjectURL(
         new Blob([RECORDER_WORKLET], { type: "application/javascript" }),
@@ -249,12 +378,12 @@ export function useAudio(): UseAudio {
   }, []);
 
   const stopRecording = useCallback(async (): Promise<RecordedAudio | null> => {
-    const ctx = ctxRef.current;
+    const ctx = captureCtxRef.current;
     nodeRef.current?.disconnect();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     if (ctx) await ctx.close();
     nodeRef.current = null;
-    ctxRef.current = null;
+    captureCtxRef.current = null;
     streamRef.current = null;
     setRecording(false);
 
@@ -288,7 +417,7 @@ export function useAudio(): UseAudio {
         });
         streamRef.current = stream;
         const ctx = new AudioContext();
-        ctxRef.current = ctx;
+        captureCtxRef.current = ctx;
         captureRateRef.current = ctx.sampleRate;
         const blobUrl = URL.createObjectURL(
           new Blob([RECORDER_WORKLET], { type: "application/javascript" }),
@@ -327,12 +456,12 @@ export function useAudio(): UseAudio {
   );
 
   const stopStreaming = useCallback(async () => {
-    const ctx = ctxRef.current;
+    const ctx = captureCtxRef.current;
     nodeRef.current?.disconnect();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     if (ctx) await ctx.close();
     nodeRef.current = null;
-    ctxRef.current = null;
+    captureCtxRef.current = null;
     streamRef.current = null;
     onChunkRef.current = null;
     streamFramesRef.current = [];
@@ -345,6 +474,8 @@ export function useAudio(): UseAudio {
     recording,
     streaming,
     micError,
+    volume,
+    setVolume,
     playWav,
     playPcm,
     stopPlayback,

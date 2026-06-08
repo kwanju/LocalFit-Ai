@@ -1,9 +1,21 @@
-import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { SessionProvider } from "@/state/session";
 import { Onboarding } from "@/screens/Onboarding";
 import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
 import { Calendar } from "@/screens/Calendar";
+
+// Shell that keeps ONE SessionProvider mounted across the workout tabs
+// (운동/기록/설정) so navigating between them never tears down the live session
+// (2026-06-08). Onboarding ("/") is outside the shell — leaving to it ends the
+// session, which is the expected "back to start" behavior.
+function SessionShell() {
+  return (
+    <SessionProvider initialMode={readDefaultMode()}>
+      <Outlet />
+    </SessionProvider>
+  );
+}
 
 const NAV = [
   { to: "/", label: "시작", end: true },
@@ -19,16 +31,11 @@ export default function App() {
         <main className="min-h-0 flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<Onboarding />} />
-            <Route
-              path="/session"
-              element={
-                <SessionProvider initialMode={readDefaultMode()}>
-                  <SessionLive />
-                </SessionProvider>
-              }
-            />
-            <Route path="/calendar" element={<Calendar />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route element={<SessionShell />}>
+              <Route path="/session" element={<SessionLive />} />
+              <Route path="/calendar" element={<Calendar />} />
+              <Route path="/settings" element={<Settings />} />
+            </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

@@ -2,21 +2,26 @@
 
 Loading
 -------
-Uses the upstream `qwen-tts` PyPI package (`qwen_tts.Qwen3TTSModel`).
-*Not* transformers `AutoModel` — Qwen3-TTS is published as a custom class.
+Uses the `faster-qwen3-tts` PyPI package (`faster_qwen3_tts.FasterQwen3TTS`),
+a CUDA-Graph-accelerated backend for the same `Qwen3-TTS-12Hz-1.7B-Base`
+weights.  TTFA drops from ~5.5s (upstream `qwen-tts`) to ~1s (sentence-batch)
+on RTX 5090 (ADR-006, 2026-06-07 개정).
 
 Streaming
 ---------
-Upstream exposes no public token-level streaming API; every generation method
-returns a full waveform.  We implement *sentence-batch* streaming (ADR-006,
-2026-06-02 개정): the LLM-side caller passes a paragraph, we split on Korean
-punctuation, synthesise sentence-by-sentence, and yield 16-bit PCM bytes for
-each completed sentence so playback can start before later sentences finish.
+We keep *sentence-batch* streaming: the LLM-side caller passes a paragraph, we
+split on Korean punctuation, synthesise sentence-by-sentence, and yield 16-bit
+PCM bytes for each completed sentence so playback can start before later
+sentences finish.  (`generate_voice_clone_streaming` exists for token-level
+streaming if even lower TTFA is needed later — see ADR-006 §후속.)
 
 Voice cloning
 -------------
-`create_voice_clone_prompt(ref_audio, ref_text)` is called once at __init__
-and cached, so per-utterance overhead is the synthesis only.
+`FasterQwen3TTS` caches the extracted voice-clone prompt internally, keyed by
+`(ref_audio, ref_text, ...)`.  We pass `ref_audio`/`ref_text` on every call;
+the first one extracts + caches, the rest reuse.  A throwaway warmup synth runs
+at __init__ so the CUDA-graph capture (~7s) happens at startup, not on the
+user's first utterance.
 """
 
 from __future__ import annotations
@@ -92,13 +97,15 @@ class Qwen3TTSClient:
 
     def __init__(self, config: AppConfig) -> None:
         qwen_cfg = config.tts.qwen3
-        self._ref_audio_path, self._ref_text, model_id, attn_impl, device_map = (
+        self._ref_audio_path, self._ref_text, model_id, attn_impl, device = (
             self._validate_config(qwen_cfg)
         )
         self._language: str = qwen_cfg.get("language", "Korean")
-        self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "60.0"))
-        self._model, self._torch = self._load_model(model_id, attn_impl, device_map)
-        self._voice_prompt = self._compute_voice_prompt()
+        self._timeout_sec: float = float(qwen_cfg.get("timeout_sec", "30.0"))
+        self._gen_kwargs = self._build_gen_kwargs(qwen_cfg)
+        self._model, self._torch = self._load_model(model_id, attn_impl, device)
+        self._ready = False
+        self._warmup()
         logger.info("Qwen3-TTS ready: {} sample_rate={}", model_id, _OUTPUT_SAMPLE_RATE)
 
     @staticmethod
@@ -112,27 +119,52 @@ class Qwen3TTSClient:
             raise FileNotFoundError(f"참조 음성 파일을 찾을 수 없습니다: {ref_audio_path}")
         if "model_id" not in qwen_cfg:
             raise ValueError("config.yaml에 tts.qwen3.model_id를 설정해 주세요.")
+        # `device` is the faster-qwen3-tts arg; accept legacy `device_map` key too.
+        device = qwen_cfg.get("device") or qwen_cfg.get("device_map", "cuda:0")
         return (
             str(ref_file),
             qwen_cfg.get("ref_text", ""),
             qwen_cfg["model_id"],
             qwen_cfg.get("attn_implementation", "sdpa"),
-            qwen_cfg.get("device_map", "cuda:0"),
+            device,
         )
 
     @staticmethod
-    def _load_model(model_id: str, attn_impl: str, device_map: str):
-        """Load Qwen3TTSModel with sdpa→eager fallback (ADR-006).  Returns (model, torch)."""
+    def _build_gen_kwargs(qwen_cfg: dict) -> dict:
+        """Generation params for voice-clone stability (ADR-006 2026-06-07/08).
+
+        faster-qwen3-tts defaults (temperature=0.9, top_k=50, do_sample=True) make
+        each independent synth stochastic — short cues ("둘!") and even whole
+        sentences drift in timbre so the cloned voice sounds like a different
+        person each time.  Two levers, both config-overridable:
+          * do_sample=False (greedy) — deterministic acoustic tokens.
+          * xvec_only=True — clone via a fixed speaker x-vector instead of ICL
+            (acoustic-context) mode.  ICL is more faithful but its per-utterance
+            conditioning is the main source of timbre drift; the x-vector pins one
+            consistent speaker identity (2026-06-08, "목소리가 전부 달라" fix).
+        """
+        return {
+            "temperature": float(qwen_cfg.get("temperature", "0.7")),
+            "top_k": int(qwen_cfg.get("top_k", "40")),
+            "top_p": float(qwen_cfg.get("top_p", "0.95")),
+            "repetition_penalty": float(qwen_cfg.get("repetition_penalty", "1.05")),
+            "do_sample": str(qwen_cfg.get("do_sample", "true")).lower() != "false",
+            "xvec_only": str(qwen_cfg.get("xvec_only", "false")).lower() == "true",
+        }
+
+    @staticmethod
+    def _load_model(model_id: str, attn_impl: str, device: str):
+        """Load FasterQwen3TTS with sdpa→eager fallback (ADR-006).  Returns (model, torch)."""
         import torch
-        from qwen_tts import Qwen3TTSModel  # type: ignore[import-not-found]
+        from faster_qwen3_tts import FasterQwen3TTS  # type: ignore[import-not-found]
 
         logger.info(
-            "Loading Qwen3-TTS model: {} attn={} device={}", model_id, attn_impl, device_map
+            "Loading faster-qwen3-tts model: {} attn={} device={}", model_id, attn_impl, device
         )
         try:
-            model = Qwen3TTSModel.from_pretrained(
+            model = FasterQwen3TTS.from_pretrained(
                 model_id,
-                device_map=device_map,
+                device=device,
                 dtype=torch.bfloat16,
                 attn_implementation=attn_impl,
             )
@@ -140,24 +172,30 @@ class Qwen3TTSClient:
             if attn_impl != "sdpa":
                 raise
             logger.warning(
-                "Qwen3-TTS sdpa load failed ({}); retrying with attn_implementation='eager'",
+                "faster-qwen3-tts sdpa load failed ({}); retrying with attn_implementation='eager'",
                 e,
             )
-            model = Qwen3TTSModel.from_pretrained(
+            model = FasterQwen3TTS.from_pretrained(
                 model_id,
-                device_map=device_map,
+                device=device,
                 dtype=torch.bfloat16,
                 attn_implementation="eager",
             )
         return model, torch
 
-    def _compute_voice_prompt(self):
-        """Cache the voice-clone prompt once so per-utterance cost is synth only."""
-        logger.info("Computing voice-clone prompt from {}", self._ref_audio_path)
-        return self._model.create_voice_clone_prompt(
-            ref_audio=self._ref_audio_path,
-            ref_text=self._ref_text or None,
-        )
+    def _warmup(self) -> None:
+        """Trigger CUDA-graph capture + voice-prompt extraction at startup.
+
+        The first `generate_voice_clone` call captures CUDA graphs (~7s) and
+        extracts the voice-clone prompt from the reference audio.  Doing it here
+        keeps the user's first real utterance fast (~1s) and populates the
+        model's internal `_voice_prompt_cache` for `(ref_audio, ref_text)`.
+        """
+        logger.info("Warming up faster-qwen3-tts (CUDA graph + voice prompt) ...")
+        t0 = time.monotonic()
+        self._synth_sentence("안녕하세요.")
+        self._ready = True
+        logger.info("faster-qwen3-tts warmup done in {}ms", int((time.monotonic() - t0) * 1000))
 
     def _synth_sentence(self, sentence: str) -> tuple[np.ndarray, int]:
         """Synchronously synthesise one sentence. Returns (float waveform, sample rate)."""
@@ -166,16 +204,18 @@ class Qwen3TTSClient:
             wavs, sr = self._model.generate_voice_clone(
                 text=sentence,
                 language=self._language,
-                voice_clone_prompt=self._voice_prompt,
+                ref_audio=self._ref_audio_path,
+                ref_text=self._ref_text,
+                **self._gen_kwargs,
             )
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         logger.debug(
-            "Qwen3-TTS sentence synth: '{}...' ({} chars) in {}ms",
+            "faster-qwen3-tts sentence synth: '{}...' ({} chars) in {}ms",
             sentence[:30],
             len(sentence),
             elapsed_ms,
         )
-        # qwen_tts returns List[np.ndarray] even for a single text (batch=1).
+        # generate_voice_clone returns (List[np.ndarray], sr) — batch=1 here.
         return wavs[0], int(sr)
 
     async def stream(self, request: TTSRequest | str) -> AsyncIterator[bytes]:
@@ -222,7 +262,7 @@ class Qwen3TTSClient:
         return _float32_to_wav(full, sample_rate)
 
     async def health(self) -> bool:
-        return self._model is not None and self._voice_prompt is not None
+        return self._model is not None and self._ready
 
 
 async def _smoke_test(text: str) -> None:

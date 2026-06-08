@@ -19,15 +19,22 @@ stt:
   resample_to: 16000                # ADR-005 §결정: 입력 != 16k면 강제 리샘플
 
 tts:
-  active: "melo"                    # ADR-006: "qwen3" | "melo" — melo 기본 (Qwen3는 voice-clone용)
+  active: "qwen3"                   # ADR-006: "qwen3" | "melo" — qwen3는 faster-qwen3-tts 백엔드. melo는 롤백용
   qwen3:
     model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     ref_audio_path: "data/ref_voice.wav"   # 참조 음성 (6초 이상 한국어 WAV) — voice clone
     ref_text: ""                    # 참조 음성 전사 텍스트 (정확도 향상용)
     attn_implementation: "sdpa"     # sdpa 우선 시도, 미지원 시 자동 eager 폴백 (ADR-006)
-    device_map: "cuda:0"
-    language: "Korean"              # qwen_tts 언어 코드
-    timeout_sec: "60.0"
+    device: "cuda:0"                # faster-qwen3-tts 디바이스
+    language: "Korean"              # faster-qwen3-tts 언어 코드
+    timeout_sec: "30.0"
+    # 음색 일관성 (ADR-006): 기본값(temp 0.9/top_k 50)은 짧은 큐에서 음색이 흔들림 → 낮춰 고정
+    temperature: "0.7"
+    top_k: "40"
+    top_p: "0.95"
+    repetition_penalty: "1.05"
+    do_sample: "true"               # "false"면 그리디(가장 일관, 다소 단조로울 수 있음)
+    xvec_only: "false"              # "true"면 x-vector 화자 임베딩 클로닝(음색 일관성↑, 충실도↓). 발화마다 목소리 달라지면 "true"
   melo:
     language: "KR"                  # MeloTTS 언어 코드 (한국어)
     device: "cuda:0"

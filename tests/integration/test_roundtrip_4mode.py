@@ -18,7 +18,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from pipecat.frames.frames import InterruptionFrame, TextFrame, TranscriptionFrame
+from pipecat.frames.frames import (
+    InputTextRawFrame,
+    InterruptionFrame,
+    TextFrame,
+    TranscriptionFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.tests.utils import run_test
 from pipecat.utils.time import time_now_iso8601
@@ -39,7 +44,6 @@ from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -152,7 +156,11 @@ async def test_s2c_roundtrip_audio_in_text_out() -> None:
 @pytest.mark.asyncio
 async def test_c2s_text_in_audio_out() -> None:
     """C2S: TextFrame → MockTTS TTSAudioRawFrame."""
-    from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame, TTSAudioRawFrame
+    from pipecat.frames.frames import (
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+        TTSAudioRawFrame,
+    )
 
     frames = [LLMFullResponseStartFrame(), TextFrame(text="운동 시작"), LLMFullResponseEndFrame()]
     down, _ = await run_test(MockTTSService(), frames_to_send=frames)
@@ -222,7 +230,7 @@ async def test_user_utterance_triggers_start_counting() -> None:
     )
 
     pipeline = _build_active_coach_pipeline(llm, slot, start_counting_cb=cb)
-    await run_test(pipeline, frames_to_send=[TextFrame(text="푸시업 10개 시작하자")])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="푸시업 10개 시작하자")])
 
     cb.assert_awaited_once()
     assert cb.call_args.args[0].exercise == "푸시업"
@@ -250,7 +258,7 @@ async def test_proactive_opener_propose_set_lands_in_slot() -> None:
     )
 
     pipeline = _build_active_coach_pipeline(llm, slot)
-    await run_test(pipeline, frames_to_send=[TextFrame(text=PROACTIVE_OPENER_USER_MESSAGE)])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text=PROACTIVE_OPENER_USER_MESSAGE)])
 
     assert slot.has_pending
     assert slot.pending_proposal.exercise == "스쿼트"
@@ -285,7 +293,7 @@ async def test_propose_set_5_scenarios(
     )
 
     pipeline = _build_active_coach_pipeline(llm, slot)
-    await run_test(pipeline, frames_to_send=[TextFrame(text=f"{exercise} 추천해줘")])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text=f"{exercise} 추천해줘")])
 
     assert slot.has_pending
     assert slot.pending_proposal.exercise == exercise
@@ -330,10 +338,7 @@ async def test_llm_timeout_counting_continues() -> None:
     """LLM 4초 지연 → timeout 발생 → 카운팅은 독립 asyncio.Task로 계속 진행."""
     import asyncio
 
-    from app.config import CountingConfig
     from app.core.counting import BeatEvent, CountingEngine, ExerciseMode
-    from app.pipecat_services.counting_manager import CountingManager
-    from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
 
     beats_received: list[BeatEvent] = []
 
@@ -387,8 +392,8 @@ async def test_tts_first_chunk_under_500ms() -> None:
     """TTS 첫 청크 < 500ms (gpu mark — RTX 5090 환경에서만 실행)."""
     import time
 
-    from app.config import load_config
     from app.adapters.tts.qwen3_client import Qwen3TTSClient
+    from app.config import load_config
 
     config = load_config()
     client = Qwen3TTSClient(config)

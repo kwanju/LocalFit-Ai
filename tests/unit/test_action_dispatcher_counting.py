@@ -21,16 +21,17 @@ async def _drive(disp: ActionDispatcherProcessor, frames) -> list:
 
 
 async def test_counting_manager_start_called_on_action() -> None:
-    """StartCountingAction must call counting_manager.start(exercise, reps)."""
+    """StartCountingAction must call counting_manager.start with sets/rest_sec (2026-06-07)."""
     mock_manager = MagicMock()
     mock_manager.start = AsyncMock()
 
     slot = ConfirmSlot()
     disp = ActionDispatcherProcessor(slot, counting_manager=mock_manager)
-    action = StartCountingAction(exercise="푸시업", reps=10)
+    disp.allow_one_direct_start()
+    action = StartCountingAction(exercise="푸시업", reps=10, sets=3, rest_sec=45)
     await _drive(disp, [CoachActionFrame(action=action)])
 
-    mock_manager.start.assert_awaited_once_with("푸시업", 10)
+    mock_manager.start.assert_awaited_once_with("푸시업", 10, sets=3, rest_sec=45)
 
 
 async def test_counting_manager_takes_priority_over_callable() -> None:
@@ -41,6 +42,7 @@ async def test_counting_manager_takes_priority_over_callable() -> None:
 
     slot = ConfirmSlot()
     disp = ActionDispatcherProcessor(slot, start_counting=legacy_cb, counting_manager=mock_manager)
+    disp.allow_one_direct_start()
     action = StartCountingAction(exercise="스쿼트", reps=15)
     await _drive(disp, [CoachActionFrame(action=action)])
 
@@ -55,6 +57,7 @@ async def test_counting_manager_exception_swallowed() -> None:
 
     slot = ConfirmSlot()
     disp = ActionDispatcherProcessor(slot, counting_manager=mock_manager)
+    disp.allow_one_direct_start()
     action = StartCountingAction(exercise="풀업", reps=5)
     # Should not raise
     await _drive(disp, [CoachActionFrame(action=action)])
@@ -66,9 +69,42 @@ async def test_no_counting_manager_falls_back_to_callable() -> None:
     cb = AsyncMock()
     slot = ConfirmSlot()
     disp = ActionDispatcherProcessor(slot, start_counting=cb)
+    disp.allow_one_direct_start()
     action = StartCountingAction(exercise="스쿼트", reps=12)
     await _drive(disp, [CoachActionFrame(action=action)])
     cb.assert_awaited_once()
+
+
+async def test_spontaneous_start_while_counting_active_is_swallowed() -> None:
+    """카운팅 진행 중 LLM 자발 start_counting(미확답)은 조용히 무시 — start 호출 X.
+
+    2026-06-07 폭주 fix.
+    """
+    mock_manager = MagicMock()
+    mock_manager.start = AsyncMock()
+    mock_manager.is_active = True  # @property → 속성 접근 (호출 아님)
+
+    slot = ConfirmSlot()
+    disp = ActionDispatcherProcessor(slot, counting_manager=mock_manager)
+    # allow_one_direct_start() 호출 안 함 → 확답 없는 자발 발행
+    action = StartCountingAction(exercise="푸시업", reps=10, sets=3, rest_sec=30)
+    await _drive(disp, [CoachActionFrame(action=action)])
+
+    mock_manager.start.assert_not_awaited()
+
+
+async def test_spontaneous_start_while_idle_is_rejected() -> None:
+    """미카운팅 + 미확답 자발 start_counting 은 가드가 거부 — start 호출 X."""
+    mock_manager = MagicMock()
+    mock_manager.start = AsyncMock()
+    mock_manager.is_active = False  # @property → 속성 접근 (호출 아님)
+
+    slot = ConfirmSlot()
+    disp = ActionDispatcherProcessor(slot, counting_manager=mock_manager)
+    action = StartCountingAction(exercise="푸시업", reps=10, sets=3, rest_sec=30)
+    await _drive(disp, [CoachActionFrame(action=action)])
+
+    mock_manager.start.assert_not_awaited()
 
 
 async def test_action_frame_not_forwarded_downstream() -> None:

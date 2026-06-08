@@ -1,22 +1,23 @@
-"""tests/unit/test_counting_cues.py — cue pool 비어있지 않음 + 5종 이상 보장 (phase-6 §6-7)."""
+"""tests/unit/test_counting_cues.py — cue pool 검증 + count_word (2026-06-04 개정)."""
 
 import pytest
 
 from app.core.counting_cues import (
     BEAT_CUES,
     ENCOURAGEMENT_CUES,
+    count_word,
     get_beat_pool,
     get_encouragement_pool,
     pick_cue,
 )
 
-_EXERCISES = ["풀업", "푸시업", "스쿼트", "플랭크"]
-_METRONOME_PHASES = {"풀업": ["up", "down"], "푸시업": ["down", "up"], "스쿼트": ["down", "up"]}
-_TIMER_PHASE = "tick"
+# 메트로놈 운동은 count_word("하나", "둘", …)로 직접 카운트하므로 BEAT_CUES에 등재하지 않음.
+# 플랭크(timer)만 BEAT_CUES["플랭크"]["tick"] 풀을 가진다.
+_TIMER_EXERCISES = ["플랭크"]
 _ENC_POINTS = ["first_third", "second_third", "last"]
 
 
-@pytest.mark.parametrize("exercise", _EXERCISES)
+@pytest.mark.parametrize("exercise", _TIMER_EXERCISES)
 def test_beat_cue_pool_not_empty(exercise: str) -> None:
     assert exercise in BEAT_CUES, f"No cue pool for exercise: {exercise}"
     for phase, pool in BEAT_CUES[exercise].items():
@@ -24,10 +25,27 @@ def test_beat_cue_pool_not_empty(exercise: str) -> None:
 
 
 def test_beat_cue_pool_5_or_more() -> None:
-    """ADR-014: 각 cue 풀은 5종 권장."""
+    """타이머(플랭크) cue 풀은 5종 권장."""
     for ex, phases in BEAT_CUES.items():
         for phase, pool in phases.items():
             assert len(pool) >= 5, f"{ex}/{phase}: expected ≥5 cues, got {len(pool)}"
+
+
+def test_count_word_korean_ordinals() -> None:
+    assert count_word(1) == "하나!"
+    assert count_word(2) == "둘!"
+    assert count_word(10) == "열!"
+    assert count_word(20) == "스물!"
+
+
+def test_count_word_fallback_above_20() -> None:
+    assert count_word(21) == "21회!"
+    assert count_word(99) == "99회!"
+
+
+def test_count_word_zero_or_negative_returns_empty() -> None:
+    assert count_word(0) == ""
+    assert count_word(-1) == ""
 
 
 @pytest.mark.parametrize("point", _ENC_POINTS)
@@ -47,14 +65,16 @@ def test_plank_cue_pool_has_n_placeholder() -> None:
     assert any("{N}" in cue for cue in pool), "플랭크 cue pool must contain {N} template"
 
 
-def test_get_beat_pool_returns_correct_pool() -> None:
-    pool = get_beat_pool("푸시업", "up")
-    assert pool == BEAT_CUES["푸시업"]["up"]
+def test_get_beat_pool_plank_tick() -> None:
+    pool = get_beat_pool("플랭크", "tick")
+    assert pool == BEAT_CUES["플랭크"]["tick"]
 
 
-def test_get_beat_pool_unknown_exercise_returns_fallback() -> None:
-    pool = get_beat_pool("런지", "up")
-    assert len(pool) >= 1
+def test_get_beat_pool_unknown_returns_empty() -> None:
+    # 메트로놈 운동(풀업/푸시업/스쿼트)이나 등재되지 않은 운동은 빈 풀.
+    # CountingEngine은 메트로놈 운동에서 count_word를 직접 쓰므로 풀은 안 쓰임.
+    assert get_beat_pool("푸시업", "up") == []
+    assert get_beat_pool("런지", "up") == []
 
 
 def test_get_encouragement_pool_known_point() -> None:
@@ -95,3 +115,15 @@ def test_pick_cue_n_elapsed_fallback() -> None:
 
 def test_pick_cue_empty_pool_returns_empty() -> None:
     assert pick_cue([]) == ""
+
+
+def test_set_ordinal_korean_native() -> None:
+    """세트 서수는 native 한국어 ("두 번째") — TTS가 "2/3"을 분수로 읽던 문제 (2026-06-08)."""
+    from app.core.counting_cues import set_ordinal
+
+    assert set_ordinal(1) == "첫 번째"
+    assert set_ordinal(2) == "두 번째"
+    assert set_ordinal(3) == "세 번째"
+    assert set_ordinal(4) == "네 번째"
+    assert set_ordinal(10) == "열 번째"
+    assert set_ordinal(11) == "11번째"  # 11+ fallback

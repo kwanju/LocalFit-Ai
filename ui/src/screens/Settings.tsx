@@ -1,5 +1,6 @@
 // Settings: backend/adapter health (ADR-014 /health) + default mode preset
 // (PRD 2-2: 환경별 프리셋). The preset is a client-side default for new sessions.
+// 2026-06-07: 운동 기록 초기화 기능 추가 (신규 사용자 시나리오 검증용).
 
 import { useEffect, useState } from "react";
 import { getHealth } from "@/api/client";
@@ -26,16 +27,54 @@ export function readDefaultMode(): SessionMode {
   return "c2c";
 }
 
+type ResetStatus =
+  | { kind: "idle" }
+  | { kind: "running"; scope: "history" | "all" }
+  | { kind: "done"; scope: "history" | "all"; cleared: Record<string, number> }
+  | { kind: "error"; message: string };
+
+async function resetRecords(scope: "history" | "all"): Promise<Record<string, number>> {
+  const res = await fetch(`/admin/reset?scope=${scope}`, { method: "POST" });
+  if (!res.ok) throw new Error(`초기화 실패 (${res.status})`);
+  const body = (await res.json()) as { cleared: Record<string, number>; scope: string };
+  return body.cleared;
+}
+
 export function Settings() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [defaultMode, setDefaultMode] = useState<SessionMode>(readDefaultMode);
+  const [reset, setReset] = useState<ResetStatus>({ kind: "idle" });
 
   useEffect(() => {
     getHealth()
       .then(setHealth)
       .catch(() => setHealthError(true));
   }, []);
+
+  const runReset = async (scope: "history" | "all") => {
+    const prompt =
+      scope === "all"
+        ? "온보딩 프로필·루틴까지 모두 삭제합니다. 초기 화면으로 돌아가요. 진행할까요?"
+        : "운동 기록(세션·세트·컨디션·대화)을 모두 삭제합니다. 진행할까요?";
+    if (!window.confirm(prompt)) return;
+    setReset({ kind: "running", scope });
+    try {
+      const cleared = await resetRecords(scope);
+      setReset({ kind: "done", scope, cleared });
+      if (scope === "all") {
+        // 온보딩까지 지웠으니 onboarding 화면으로 리로드.
+        window.setTimeout(() => {
+          window.location.href = "/";
+        }, 800);
+      }
+    } catch (err) {
+      setReset({
+        kind: "error",
+        message: err instanceof Error ? err.message : "초기화 중 알 수 없는 오류가 발생했습니다.",
+      });
+    }
+  };
 
   const onModeChange = (mode: SessionMode) => {
     setDefaultMode(mode);
@@ -72,6 +111,45 @@ export function Settings() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-lg font-semibold">데이터 관리</h2>
+        <p className="text-xs text-slate-500">
+          테스트하면서 쌓인 세션/세트 기록을 비울 수 있어요. 신규 사용자 시나리오 검증에 사용.
+        </p>
+        <div className="flex flex-col gap-2 rounded-lg bg-slate-800 p-3">
+          <button
+            type="button"
+            disabled={reset.kind === "running"}
+            onClick={() => void runReset("history")}
+            className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            운동 기록만 초기화
+          </button>
+          <button
+            type="button"
+            disabled={reset.kind === "running"}
+            onClick={() => void runReset("all")}
+            className="rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            전체 초기화 (프로필·루틴 포함)
+          </button>
+          {reset.kind === "running" && (
+            <p className="text-xs text-slate-400">초기화 중…</p>
+          )}
+          {reset.kind === "done" && (
+            <p className="text-xs text-emerald-400">
+              완료: {Object.entries(reset.cleared)
+                .filter(([, n]) => n > 0)
+                .map(([k, n]) => `${k} ${n}`)
+                .join(", ") || "(삭제할 데이터 없음)"}
+            </p>
+          )}
+          {reset.kind === "error" && (
+            <p className="text-xs text-rose-400">{reset.message}</p>
+          )}
+        </div>
       </section>
 
       {/* 단일 사용자 앱(ADR-002)이라 면책 고지는 능동 노출 없이 옵션으로만 둔다. */}

@@ -59,12 +59,25 @@ export interface InterruptMessage {
   type: "interrupt";
 }
 
-// Counting beat (OutputTransportMessageFrame from CountingInjectProcessor)
-export interface BeatMessage {
-  type: "beat";
-  rep: number;
+// 카운트 cue 메타 (OutputTransportMessageFrame from CountingInjectProcessor).
+// audio msg 보다 먼저 도착해서 UI가 다음 audio chunk 와 짝지을 수 있도록 한다.
+// audio 실제 재생 시작 시점에 카운터·세트 표시를 업데이트 (sync 보장).
+export interface BeatMetaMessage {
+  type: "beat_meta";
+  kind: "count" | "encouragement" | "tick";
+  rep: number;          // count: 1-indexed 카운트 중 횟수 / tick: 0
   phase: "up" | "down" | "tick";
+  set_number: number;
+  total_sets: number;
   elapsed_sec: number;
+}
+
+// Rest period between sets (OutputTransportMessageFrame from CountingManager)
+export interface RestMessage {
+  type: "rest";
+  remaining_sec: number;
+  set_done: number;     // 방금 끝낸 세트 번호 (1-indexed)
+  total_sets: number;
 }
 
 // VAD state (OutputTransportMessageFrame from ws_voice)
@@ -88,7 +101,8 @@ export type ServerMessage =
   | AudioMessage
   | TranscriptionMessage
   | InterruptMessage
-  | BeatMessage
+  | BeatMetaMessage
+  | RestMessage
   | VadMessage
   | SessionEndedMessage
   | ErrorMessage;

@@ -19,19 +19,26 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
-from pipecat.frames.frames import OutputTransportMessageFrame, TextFrame
+from pipecat.frames.frames import (
+    InputTextRawFrame,
+    OutputTransportMessageFrame,
+    TTSSpeakFrame,
+)
 from pipecat.pipeline.worker import PipelineWorker
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import AppConfig
 from app.core.confirm_slot import ConfirmSlot
 from app.core.counting import CompleteEvent
+from app.core.counting_cues import set_ordinal
 from app.db.engine import create_db_session
-from app.db.models import SessionMode as DBSessionMode, SessionStatus
+from app.db.models import SessionMode as DBSessionMode
+from app.db.models import SessionStatus
 from app.db.repositories import ExerciseRepository, SessionRepository, SetLogRepository
+from app.pipecat_services.coach_context_adapter import DBCoachContextAdapter
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.json_frame_serializer import JsonFrameSerializer
-from app.pipecat_services.coach_context_adapter import DBCoachContextAdapter
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
 from app.pipecat_services.pipeline_builder import SessionMode, build_pipeline
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
@@ -39,11 +46,12 @@ from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 from app.pipecat_services.processors.counting_inject import CountingInjectProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
 from app.pipecat_services.processors.ui_control import UIControlProcessor
+from app.pipecat_services.processors.ui_text_broadcast import UITextBroadcastProcessor
+from app.pipecat_services.service_factory import build_stt_service, build_tts_service
 from app.prompts.coaching import (
     COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
     PROACTIVE_OPENER_USER_MESSAGE,
 )
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 
 router = APIRouter(tags=["ws"])
 
@@ -94,9 +102,13 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         ),
     )
 
-    # Real services come from lifespan; absent ones fall back to mocks via build_pipeline.
-    tts_service = getattr(websocket.app.state, "tts_service", None)
-    stt_service = getattr(websocket.app.state, "stt_service", None) if use_stt else None
+    # Pipecat *Service 인스턴스는 단일 파이프라인 lifecycle에 종속이라 매 연결마다
+    # 새로 만든다. 무거운 모델은 app.state.tts/stt (client) 안에서 한 번만 로드된 채
+    # 재사용된다. 어댑터가 없으면 build_pipeline이 Mock으로 폴백.
+    tts_client = getattr(websocket.app.state, "tts", None)
+    stt_client = getattr(websocket.app.state, "stt", None) if use_stt else None
+    tts_service = build_tts_service(tts_client)
+    stt_service = build_stt_service(stt_client) if use_stt else None
     vad_analyzer = _build_vad_analyzer(config) if (config and use_stt) else None
 
     # ADR-013: shared ConfirmSlot between ConfirmRule + ActionDispatcher.
@@ -119,11 +131,15 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         counting_manager.attach_inject_processor(counting_inject)
 
     safety = SafetyGuardProcessor(counting_manager=counting_manager)
-    confirm = ConfirmRuleProcessor(slot)
     dispatcher = ActionDispatcherProcessor(slot, counting_manager=counting_manager)
+    confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 
     # Phase-7: UIControlProcessor handles control messages from the browser.
     ui_control = UIControlProcessor(counting_manager=counting_manager)
+
+    # Pipecat 1.3 transports don't forward TextFrames to the wire — mirror them
+    # as OutputTransportMessageFrame so the UI receives coach text.
+    ui_text_broadcast = UITextBroadcastProcessor()
 
     pipeline = build_pipeline(
         transport,
@@ -138,6 +154,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         confirm_slot=slot,
         counting_inject=counting_inject,
         ui_control=ui_control,
+        ui_text_broadcast=ui_text_broadcast,
     )
     worker = PipelineWorker(pipeline, enable_rtvi=False)
     runner = WorkerRunner()
@@ -149,40 +166,68 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     # Mutable holder for DB session id (set in on_connected).
     _db_session_id: list[int | None] = [None]
 
-    # Wire counting complete → SetLog + auto follow-up (ADR-014 §카운팅 완료 처리)
+    # Wire counting complete → SetLog (매 세트) + auto follow-up (마지막 세트).
+    # 2026-06-07: multi-set 지원으로 SetLog는 set 마다, follow-up LLM은 마지막에만.
     if counting_manager is not None:
-        async def on_counting_complete(event: CompleteEvent) -> None:
-            # 1. SetLog 기록
-            if _db_session_id[0] is not None:
-                try:
-                    async with create_db_session() as db:
-                        ex_repo = ExerciseRepository(db)
-                        ex = await ex_repo.get_by_name(event.exercise_name)
-                        if ex and ex.id is not None:
-                            set_repo = SetLogRepository(db)
-                            reps = event.reps_completed if event.duration_sec is None else None
-                            dur = (
-                                int(event.duration_sec) if event.duration_sec is not None else None
-                            )
-                            await set_repo.create(
-                                session_id=_db_session_id[0],
-                                exercise_id=ex.id,
-                                set_number=1,
-                                reps_completed=reps,
-                                duration_sec=dur,
-                            )
-                            logger.info(
-                                "SetLog recorded: exercise={} reps={} dur={}",
-                                event.exercise_name, reps, dur,
-                            )
-                except Exception as e:  # noqa: BLE001
-                    logger.error("SetLog write failed: {}", e)
+        async def on_set_done(
+            event: CompleteEvent, set_number: int, total_sets: int
+        ) -> None:
+            if _db_session_id[0] is None:
+                return
+            try:
+                async with create_db_session() as db:
+                    ex_repo = ExerciseRepository(db)
+                    ex = await ex_repo.get_by_name(event.exercise_name)
+                    if ex and ex.id is not None:
+                        set_repo = SetLogRepository(db)
+                        reps = event.reps_completed if event.duration_sec is None else None
+                        dur = int(event.duration_sec) if event.duration_sec is not None else None
+                        await set_repo.create(
+                            session_id=_db_session_id[0],
+                            exercise_id=ex.id,
+                            set_number=set_number,
+                            reps_completed=reps,
+                            duration_sec=dur,
+                        )
+                        logger.info(
+                            "SetLog recorded: exercise={} set={}/{} reps={} dur={}",
+                            event.exercise_name, set_number, total_sets, reps, dur,
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.error("SetLog write failed: {}", e)
 
-            # 2. 자동 follow-up LLM 호출 (ADR-013 §0 능동 주도 원칙)
-            await worker.queue_frame(TextFrame(text=COUNTING_COMPLETE_FOLLOW_UP_MESSAGE))
+        async def on_session_done(event: CompleteEvent) -> None:
+            # 마지막 세트 완료 후 follow-up LLM (다음 운동/휴식/종료 제안).
+            # InputTextRawFrame so the LLM treats it as a user turn (drives follow-up).
+            # 마지막 세트 완료 후이므로 카운팅 비활성 — GPU 경합 없음.
+            await worker.queue_frame(
+                InputTextRawFrame(text=COUNTING_COMPLETE_FOLLOW_UP_MESSAGE)
+            )
             logger.info("ws_voice: injected counting follow-up message")
 
-        counting_manager.on_session_complete = on_counting_complete
+        async def on_rest(remaining_sec: int, set_done: int, total_sets: int) -> None:
+            # UI 카운트다운 + 음성 안내. 0초는 "휴식 끝", 10초는 "10초 남음", 그 외 시작.
+            if remaining_sec == 0:
+                # 서수로 발화 — "2/3"이 "삼분의이"로 읽히던 문제 (2026-06-08).
+                cue = f"{set_ordinal(set_done + 1)} 세트 시작!"
+            elif remaining_sec == 10:
+                cue = "10초 남았어요"
+            else:
+                cue = f"{remaining_sec}초 휴식할게요."
+            await worker.queue_frame(OutputTransportMessageFrame(message={
+                "type": "rest",
+                "remaining_sec": remaining_sec,
+                "set_done": set_done,
+                "total_sets": total_sets,
+            }))
+            # TTSSpeakFrame (NOT TextFrame): 휴식 멘트를 즉시 개별 발화. TextFrame이면
+            # TTSService 집계 버퍼에 쌓여 휴식 내내 침묵하다 세션 끝에 몰아서 나왔다
+            # (2026-06-08 fix). 카운트 큐와 동일한 처리.
+            await worker.queue_frame(TTSSpeakFrame(text=cue))
+
+        counting_manager.on_set_complete = on_set_done
+        counting_manager.on_session_complete = on_session_done
+        counting_manager.on_rest_event = on_rest
 
     @transport.event_handler("on_client_connected")
     async def on_connected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
@@ -210,11 +255,21 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
 
         if proactive_enabled:
             logger.info("ws_voice: injecting proactive opener (ADR-013 §0)")
-            await worker.queue_frame(TextFrame(text=PROACTIVE_OPENER_USER_MESSAGE))
+            # InputTextRawFrame so the LLM treats it as a user turn (drives the opener).
+            await worker.queue_frame(InputTextRawFrame(text=PROACTIVE_OPENER_USER_MESSAGE))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
         logger.info("ws_voice client disconnected: mode={}", session_mode.value)
+
+        # 1) LLM/TTS 진행 중인 작업 즉시 무효화. disconnect 후 LLM 응답이 도착해
+        #    start_counting 까지 발화하던 문제 차단 (2026-06-07).
+        try:
+            if llm_processor is not None:
+                llm_processor.reset_history()
+            slot.clear()
+        except Exception as e:  # noqa: BLE001
+            logger.error("session cleanup on disconnect failed: {}", e)
 
         # 카운팅 중이면 정지
         if counting_manager is not None:

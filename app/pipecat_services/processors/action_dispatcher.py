@@ -33,6 +33,10 @@ LogConditionFn = Callable[[LogConditionAction], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
+    def allow_one_direct_start(self) -> None:
+        """ConfirmRule이 사용자 확답을 받아 직접 start_counting 을 emit 할 때 호출."""
+        self._allow_direct_start = True
+
     def __init__(
         self,
         slot: ConfirmSlot,
@@ -46,6 +50,9 @@ class ActionDispatcherProcessor(FrameProcessor):
         self._start_counting = start_counting
         self._log_condition = log_condition
         self._counting_manager = counting_manager
+        # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
+        # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
+        self._allow_direct_start: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -66,13 +73,40 @@ class ActionDispatcherProcessor(FrameProcessor):
             return
 
         if isinstance(action, StartCountingAction):
+            # 가드: 사용자 확답 없이는 LLM 마음대로 운동 시작 못 함 (2026-06-07 사용자 피드백).
+            # ConfirmRule에서 검증된 accept-keyword 응답일 때만 has_pending 이 막 비워졌으니
+            # _allow_direct_start 가 True (ConfirmRule이 직접 만든 액션). LLM 이 자기 마음대로
+            # 발행한 액션은 모두 거부.
+            if not self._allow_direct_start:
+                # 이미 카운팅 진행 중이면 LLM의 자발적 start_counting 은 정상 흐름의
+                # 잡음(엔진이 주도 중)이므로 경고 없이 조용히 무시 (2026-06-07 폭주 fix).
+                if self._counting_manager is not None and self._counting_manager.is_active:
+                    logger.debug(
+                        "start_counting ignored — counting already in progress; "
+                        "exercise={} (LLM 자발 발행, 정상)",
+                        action.exercise,
+                    )
+                    return
+                logger.warning(
+                    "dispatch start_counting REJECTED — user did not confirm; "
+                    "exercise={} reps={} sets={} (요청은 무시됨)",
+                    action.exercise, action.reps, action.sets,
+                )
+                return
+            self._allow_direct_start = False  # 한 번 쓰면 리셋.
             logger.info(
-                "dispatch start_counting: exercise={} reps={}",
-                action.exercise, action.reps,
+                "dispatch start_counting: exercise={} reps={} sets={} rest={}s",
+                action.exercise, action.reps, action.sets, action.rest_sec,
             )
             if self._counting_manager is not None:
                 try:
-                    await self._counting_manager.start(action.exercise, action.reps)
+                    # multi-set 지원 (2026-06-07).
+                    await self._counting_manager.start(
+                        action.exercise,
+                        action.reps,
+                        sets=action.sets,
+                        rest_sec=action.rest_sec,
+                    )
                 except Exception as e:  # noqa: BLE001 — logged, never break pipeline
                     logger.error("counting_manager.start dispatch failed: {}", e)
             elif self._start_counting is not None:
