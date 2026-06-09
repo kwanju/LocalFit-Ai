@@ -201,3 +201,39 @@ async def test_chat_confirm_starts_counting() -> None:
     _assert_no_error_frame(list(down) + list(up))
     assert manager.is_active, "채팅 'ㄱㄱ' 확답으로 카운팅이 시작돼야 함"
     await manager.stop()
+
+
+# ---------------------------------------------------------------------------
+# 시나리오 F — 운동 변경: opener 푸시업 제안 → LLM이 플랭크 start_counting(거부→제안전환)
+#   → 'ㄱㄱ' → 푸시업이 아니라 플랭크가 시작돼야 함 (2026-06-09 버그 회귀 방어)
+# ---------------------------------------------------------------------------
+
+
+async def test_changed_exercise_starts_new_not_stale() -> None:
+    """'플랭크로 하자'(LLM start_counting 거부→제안전환) 후 'ㄱㄱ' → 플랭크 시작(푸시업 X)."""
+    from pipecat.frames.frames import InputTextRawFrame
+    from pipecat.pipeline.pipeline import Pipeline
+
+    from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
+
+    manager = CountingManager(_fast_counting_config())
+    inject = CountingInjectProcessor()
+    manager.attach_inject_processor(inject)
+
+    slot = ConfirmSlot()
+    slot.set(ProposeSetAction(exercise="푸시업", reps=10, sets=3, rest_sec=30))  # opener 제안
+    disp = ActionDispatcherProcessor(slot, counting_manager=manager)
+    confirm = ConfirmRuleProcessor(slot, dispatcher=disp)
+
+    # 1) LLM이 플랭크 start_counting 발행(미확답) → 제안으로 전환되어 슬롯 갱신.
+    await disp._dispatch(StartCountingAction(exercise="플랭크", reps=30, sets=1, rest_sec=30))
+    assert slot.pending_proposal.exercise == "플랭크", "슬롯이 플랭크로 갱신돼야 함"
+
+    # 2) 'ㄱㄱ' → 플랭크 시작 (이전 푸시업 아님).
+    pipeline = Pipeline([confirm, disp])
+    down, up = await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="ㄱㄱ")])
+
+    _assert_no_error_frame(list(down) + list(up))
+    assert manager.is_active
+    assert manager._active_exercise == "플랭크", "바뀐 운동(플랭크)이 시작돼야 함"
+    await manager.stop()

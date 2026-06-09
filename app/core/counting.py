@@ -10,7 +10,6 @@ from loguru import logger
 
 from app.core.counting_cues import (
     count_word,
-    get_beat_pool,
     get_encouragement_pool,
     pick_cue,
 )
@@ -182,8 +181,19 @@ class CountingEngine:
         self._phase = "down" if self._phase == "up" else "up"
 
     async def _timer_tick(self) -> None:
+        # 플랭크(timer): 유지 중엔 깔끔한 초 카운트("1초","2초",…)만 — "힘내요/N초 남았어요"
+        # 류 잡담을 매초 하던 게 TTS를 밀어 실제 시간과 어긋났다(2026-06-09 사용자 피드백).
+        # 짧은 "N초"는 1초 간격에 안 밀린다. 완료 시 격려 1회.
         elapsed = self.elapsed_sec
-        cue = self._select_timer_cue(elapsed)
+        done = self._target_duration_sec is not None and elapsed >= self._target_duration_sec
+        if done:
+            cue = self._pick(get_encouragement_pool("timer_done"), "enc_timer_done")
+            self._last_cue_kind = "encouragement"
+        else:
+            # 숫자만 카운트 ("1","2","3"… → "일,이,삼"). 매초 "초"를 붙이면 거슬려서 제거
+            # (2026-06-09 사용자 피드백).
+            cue = str(round(elapsed))
+            self._last_cue_kind = "tick"
         await self._on_beat(
             BeatEvent(
                 rep=0,
@@ -195,7 +205,7 @@ class CountingEngine:
                 total_sets=self._total_sets,
             )
         )
-        if self._target_duration_sec is not None and elapsed >= self._target_duration_sec:
+        if done:
             logger.info("CountingEngine: target duration reached (%.1fs)", elapsed)
             await self._fire_complete(duration_sec=elapsed)
             task = asyncio.current_task()
@@ -239,25 +249,6 @@ class CountingEngine:
 
         self._last_cue_kind = "count"
         return count_word(next_rep)
-
-    def _select_timer_cue(self, elapsed: float) -> str:
-        target = self._target_duration_sec or 0.0
-        remaining = max(0.0, target - elapsed)
-
-        # Check encouragement based on elapsed time progress
-        if target > 0 and self._encouragement_points:
-            progress = elapsed / target
-            for i, threshold in enumerate(self._encouragement_points):
-                if progress >= threshold and i not in self._fired_enc:
-                    self._fired_enc.add(i)
-                    pool_key = _ENC_POOL_KEYS[min(i, len(_ENC_POOL_KEYS) - 1)]
-                    pool = get_encouragement_pool(pool_key)
-                    self._last_cue_kind = "encouragement"
-                    return self._pick(pool, f"enc_{pool_key}")
-
-        pool = get_beat_pool(self._exercise_name, "tick")
-        self._last_cue_kind = "tick"
-        return self._pick(pool, "beat_tick", remaining_sec=remaining)
 
     def _pick(self, pool: list[str], counter_key: str, **kw: float | None) -> str:
         idx = self._seq_counters.get(counter_key, 0)

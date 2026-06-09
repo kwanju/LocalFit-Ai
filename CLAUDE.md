@@ -10,15 +10,14 @@
 LocalFit AI는 로컬 LLM 기반 개인 AI 피트니스 코치 데스크탑 앱이다.
 **1인 개인 프로젝트**이며, 화면 없이(음성) 또는 소리 없이(채팅) 운동 코칭을 받는 4-모드 입출력이 핵심.
 
-## 0-1. 현재 상태 (2026-06-07 업데이트)
+## 0-1. 현재 상태 (2026-06-09 업데이트)
 
 - **v1 (MVP, P0)는 출시 완료 후 `_archive/v1/`에 보존**됨 — 코드는 그대로 base로 재활용.
 - **v2 (단일 프로그램 패키징)는 폐기.** pywebview + PyInstaller 빌드·검증 이슈 누적으로 ROI 낮다고 판단. v2 시점 산출물(ADR-020/021, XTTS 어댑터, desktop.py, spec)은 `backup/v2-trial` 브랜치에 보존.
-- **v3-rewrite (현재 브랜치)** — v1 base에서 ADR을 백지에서 다시 발행. 19개 ADR + PRD v4 + 새 phase 명세.
-- **v3 마무리 단계** — phase 1-8 구현 + 사용자 통합 검증 + 후속 fix 진행 중. v3 master 동결 직전.
-- **faster-qwen3-tts 통합 = 완료** (2026-06-08, 커밋 `697801b`). 첫 청크 4818ms→884ms. 후속 버그(카운트 뭉침·드롭, 휴식 침묵, 음색 일관성, 5세트 수정, 플랭크 시간) 수정 완료. 회고는 `docs/_archive/v3/faster-qwen3-tts.md`.
-- **다음 작업**:
-  - `docs/future/v4-vision.md` — v4 비전 deep interview. (faster-qwen3 끝났으니 진입 가능)
+- **v3-rewrite = 완료/동결 (2026-06-09)** — phase 1-8 구현 + 사용자 통합 검증 + 후속 fix 전부 마무리. master 동결.
+- **v3 마무리 작업 (전부 완료)**: faster-qwen3-tts 통합(첫 청크 4818→884ms) + token-streaming, MeloTTS 완전 제거(단독 확정), UI 테스트 인프라(Vitest), 시나리오 테스트 전략 문서화, 그리고 사용자 검증으로 잡은 버그 다수(카운트 뭉침·드롭, 휴식 멘트, 음색 일관성 do_sample/xvec, 세션 종료, 탭 이동 세션 유지, 확답 확대, 운동 변경, 플랭크 초 카운트). 회고: `docs/_archive/v3/faster-qwen3-tts.md`.
+- **다음 작업 = v4**:
+  - `docs/future/v4-vision.md` — v4 비전 deep interview (§6 질문 묶음부터).
 - **회고 자료**: `docs/retrospectives/2026-06-07-v3-lessons.md` — v3 에서 배운 4가지 원칙 + 무한 굴레 패턴 5가지. **다음 프로젝트 시작 전 반드시 읽기**.
 - **핵심 변경**:
   - 음성 파이프라인 = **Pipecat 전면 채택** (ADR-011) — 인터럽트·turn 검출 외주

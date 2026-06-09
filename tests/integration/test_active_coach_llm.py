@@ -48,12 +48,15 @@ async def test_proactive_principle_accepts_user_redirect() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_start_emits_start_counting() -> None:
-    """사용자가 명시적으로 '푸시업 10개 시작' → start_counting 액션 발행."""
+async def test_explicit_plan_emits_propose_set_not_start() -> None:
+    """명시적 운동 발화도 propose_set 으로 제안만 — start_counting 직접 발행 X (2026-06-09).
+
+    실제 시작은 사용자 확답(ConfirmRule) 이 처리한다. LLM 의 start_counting 은 백엔드가
+    무시(제안 전환)하므로 LLM 이 내면 안 된다.
+    """
     response = await _generate("푸시업 10개 시작하자")
-    start_actions = [a for a in response.actions if a.type == "start_counting"]
-    assert len(start_actions) >= 1, (
-        f"명시적 시작 발화에 start_counting 액션이 없습니다: {response}"
-    )
-    assert start_actions[0].exercise == "푸시업"
-    assert start_actions[0].reps == 10
+    propose = [a for a in response.actions if a.type == "propose_set"]
+    start = [a for a in response.actions if a.type == "start_counting"]
+    assert len(propose) >= 1, f"propose_set 기대: {response}"
+    assert start == [], f"start_counting 직접 발행하면 안 됨: {response}"
+    assert propose[0].exercise == "푸시업"

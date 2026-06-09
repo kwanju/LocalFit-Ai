@@ -87,10 +87,22 @@ class ActionDispatcherProcessor(FrameProcessor):
                         action.exercise,
                     )
                     return
-                logger.warning(
-                    "dispatch start_counting REJECTED — user did not confirm; "
-                    "exercise={} reps={} sets={} (요청은 무시됨)",
-                    action.exercise, action.reps, action.sets,
+                # 사용자 확답 없이 LLM이 발행한 start_counting 은 직접 시작하면 안 되지만,
+                # 그냥 버리면 사용자가 바꾼 운동(예: "플랭크로 하자")이 슬롯에 반영 안 돼
+                # 다음 확답("ㄱㄱ")이 *이전* 제안(푸시업)을 시작시킨다(2026-06-09 버그).
+                # → **제안(pending proposal)으로 전환**해 슬롯을 갱신한다. 실제 시작은
+                #    여전히 사용자 확답이 ConfirmRule 을 거쳐야 일어난다.
+                self._slot.set(
+                    ProposeSetAction(
+                        exercise=action.exercise,
+                        reps=action.reps,
+                        sets=action.sets,
+                        rest_sec=action.rest_sec,
+                    )
+                )
+                logger.info(
+                    "start_counting(미확답) → 제안으로 전환: exercise={} reps={} sets={} rest={}s",
+                    action.exercise, action.reps, action.sets, action.rest_sec,
                 )
                 return
             self._allow_direct_start = False  # 한 번 쓰면 리셋.

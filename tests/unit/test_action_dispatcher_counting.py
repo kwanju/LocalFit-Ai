@@ -93,18 +93,28 @@ async def test_spontaneous_start_while_counting_active_is_swallowed() -> None:
     mock_manager.start.assert_not_awaited()
 
 
-async def test_spontaneous_start_while_idle_is_rejected() -> None:
-    """미카운팅 + 미확답 자발 start_counting 은 가드가 거부 — start 호출 X."""
+async def test_spontaneous_start_while_idle_converts_to_proposal() -> None:
+    """미카운팅 + 미확답 start_counting 은 직접 시작 X, 대신 *제안*으로 전환돼 슬롯 갱신.
+
+    2026-06-09 버그: '플랭크로 하자'에 LLM이 start_counting(플랭크) 발행→거부됐는데 슬롯이
+    이전(푸시업) 그대로라 다음 'ㄱㄱ'가 푸시업을 시작시켰다. 이제 슬롯이 플랭크로 갱신된다.
+    """
+    from app.core.coach_response import ProposeSetAction
+
     mock_manager = MagicMock()
     mock_manager.start = AsyncMock()
     mock_manager.is_active = False  # @property → 속성 접근 (호출 아님)
 
     slot = ConfirmSlot()
     disp = ActionDispatcherProcessor(slot, counting_manager=mock_manager)
-    action = StartCountingAction(exercise="푸시업", reps=10, sets=3, rest_sec=30)
+    action = StartCountingAction(exercise="플랭크", reps=30, sets=1, rest_sec=30)
     await _drive(disp, [CoachActionFrame(action=action)])
 
-    mock_manager.start.assert_not_awaited()
+    mock_manager.start.assert_not_awaited()  # 직접 시작은 안 함
+    assert slot.has_pending
+    pending = slot.pending_proposal
+    assert isinstance(pending, ProposeSetAction)
+    assert pending.exercise == "플랭크" and pending.reps == 30 and pending.sets == 1
 
 
 async def test_action_frame_not_forwarded_downstream() -> None:

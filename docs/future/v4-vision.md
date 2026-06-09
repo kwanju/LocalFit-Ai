@@ -103,9 +103,12 @@
 - [x] Dispatch guard — LLM 마음대로 운동 시작 차단 (완료)
 - [x] 세션 종료 시 LLM history/slot 즉시 비움 (완료)
 - [x] 다회 세트 + 휴식 + 볼륨 + 데이터 초기화 (완료)
-- [x] **faster-qwen3-tts 통합** (2026-06-08 완료, 커밋 `697801b` — [회고](../_archive/v3/faster-qwen3-tts.md))
-- [ ] 사용자가 위 모든 변경 검증
-- [ ] 검증 끝나면 master 동결 + v4 시작
+- [x] **faster-qwen3-tts 통합** + token-streaming (2026-06-08~09 — [회고](../_archive/v3/faster-qwen3-tts.md))
+- [x] MeloTTS 완전 제거 (faster-qwen3-tts 단독 확정)
+- [x] UI 테스트 인프라(Vitest) + 시나리오 테스트 전략 (`docs/testing-strategy.md`)
+- [x] 사용자 검증으로 잡은 후속 버그 다수 (카운트·오디오·세션·확답·운동변경·플랭크)
+- [x] **사용자가 위 모든 변경 검증 완료 (2026-06-09)**
+- [x] **master 동결 → v4 시작** (2026-06-09)
 
 ## 6. Deep Interview 질문 목록 (다음 세션에서 사용)
 

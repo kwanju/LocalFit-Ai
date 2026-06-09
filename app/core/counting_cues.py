@@ -74,6 +74,12 @@ ENCOURAGEMENT_CUES: dict[str, list[str]] = {
         "한 번 더 끝!",
         "완성!",
     ],
+    # 플랭크(timer) 완료 시 1회 — 유지 중엔 무음, 끝에만 격려 (2026-06-09 사용자 요청).
+    "timer_done": [
+        "완성! 잘하셨어요!",
+        "끝! 잘 버텼어요!",
+        "수고했어요!",
+    ],
 }
 
 _FALLBACK_BEAT: list[str] = []  # 메트로놈은 count_word 직접 사용, fallback 미사용
