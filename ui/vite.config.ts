@@ -15,8 +15,12 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  // Tauri (Phase v4-0): vite must not watch the Rust target dir, or its file
+  // watcher crashes with EBUSY on app_lib.dll while cargo is linking it.
+  clearScreen: false,
   server: {
     port: 5173,
+    watch: { ignored: ["**/src-tauri/**"] },
     proxy: {
       "/health": BACKEND,
       "/sessions": BACKEND,
