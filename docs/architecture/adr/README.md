@@ -52,6 +52,26 @@ v1 시점 ADR 16개와 v2 시점 ADR 020/021은 `_archive/v1/`에 보존된다(h
 | [019](019-test-strategy.md) | 테스트 전략 — pytest + Pipecat MockTransport + 어댑터 mock | Accepted |
 | [020](020-workout-calendar.md) | **운동 캘린더 시각화 — react-activity-calendar + 강도 히트맵** | Accepted |
 
+## v4 시리즈 인덱스 (진행 중 — 2026-06-10~)
+
+v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v4 ADR 은 v3 와 충돌 시 **v4 가 우선**(v3 master 동결). native 의존 ADR(027/030/031)은 **Phase v4-0 Tauri 탐사**(`docs/agent-tasks/v4/phase-0-tauri-spike.md`) 통과 후 Accepted.
+
+| # | 제목 | 상태 | supersedes |
+|---|---|---|---|
+| 021 | v4 진입 — 비전·스코프·마이그레이션 + UX 3모드(S2C 제거) | Proposed | — |
+| 022 | Google Calendar 연동 (OAuth2 Desktop, 외부 API) | Proposed | — |
+| 023 | 컨디션 트래킹 — 자가보고 체크인 (외부 건강 API 없음) | Proposed | — |
+| 024 | 운동 플랜 — 주간 목표 + 조정은 확인 | Proposed | — |
+| 025 | 영속 메모리 — SQLite 구조화+자유텍스트, 부상/제약 전량 주입 | Proposed | — |
+| 026 | 운동 종목 — v3 4종 고정 유지 | Deferred | — |
+| 027 | 능동 알림 + 백그라운드 스케줄러 (native) | Proposed (탐사 의존) | — |
+| 028 | 첫 세션 대화형 체력검증 | Proposed | — |
+| 029 | LLM 모델 — qwen3.5:9b (config 교체) | Proposed | 004 |
+| 030 | 모델 lifecycle — on-demand 로드/언로드 | Proposed (탐사 의존) | 015 |
+| 031 | UI 플랫폼 — native 데스크탑(Tauri) | Proposed (탐사 의존) | 010 |
+
+> 표기: native 의존 ADR 은 탐사 go 전까지 Proposed. 탐사 no-go 시 027/030/031 은 폐기/수정되고 010/015 가 유지된다.
+
 ## v1과 비교한 주요 변경
 
 | 영역 | v1 | v3 |
