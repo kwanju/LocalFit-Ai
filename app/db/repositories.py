@@ -137,14 +137,18 @@ class ConditionRepository:
 
     async def create(
         self,
-        session_id: int,
+        session_id: int | None = None,
         fatigue_level: int | None = None,
+        soreness: int | None = None,
         pain_report: str | None = None,
         notes: str | None = None,
     ) -> ConditionLog:
+        """체크인 저장(ADR-023). ``session_id=None`` 이면 세션 전 일일 체크인 —
+        세션 생성 시 ``link_latest_unlinked`` 가 연결한다."""
         log = ConditionLog(
             session_id=session_id,
             fatigue_level=fatigue_level,
+            soreness=soreness,
             pain_report=pain_report,
             notes=notes,
         )
@@ -158,6 +162,38 @@ class ConditionRepository:
             select(ConditionLog).where(ConditionLog.session_id == session_id)
         )
         return list(result.all())
+
+    async def latest(self) -> ConditionLog | None:
+        """가장 최근 체크인(세션 연결 여부 무관). 코치 컨텍스트의 컨디션 신호용."""
+        result = await self._session.exec(
+            select(ConditionLog).order_by(ConditionLog.logged_at.desc()).limit(1)
+        )
+        return result.first()
+
+    async def latest_unlinked(self, within_hours: int = 12) -> ConditionLog | None:
+        """``within_hours`` 안의 세션 미연결 체크인 중 가장 최근 것(세션 연결 대상)."""
+        cutoff = datetime.now(UTC) - timedelta(hours=within_hours)
+        result = await self._session.exec(
+            select(ConditionLog)
+            .where(ConditionLog.session_id == None)  # noqa: E711 — SQLAlchemy IS NULL
+            .where(ConditionLog.logged_at >= cutoff)
+            .order_by(ConditionLog.logged_at.desc())
+            .limit(1)
+        )
+        return result.first()
+
+    async def link_latest_unlinked(
+        self, session_id: int, within_hours: int = 12
+    ) -> ConditionLog | None:
+        """세션 전 체크인(session_id=None)을 새 세션에 연결. 없으면 None."""
+        row = await self.latest_unlinked(within_hours=within_hours)
+        if row is None:
+            return None
+        row.session_id = session_id
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return row
 
     async def get_by_sessions(self, session_ids: list[int]) -> list[ConditionLog]:
         """Batch-fetch condition logs for multiple sessions (ADR-020 §캘린더 API)."""

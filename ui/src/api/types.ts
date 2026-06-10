@@ -154,3 +154,16 @@ export interface Routine {
   name: string;
   description: string | null;
 }
+
+// 자가보고 컨디션 체크인 (ADR-023). 모든 필드 선택 — 건너뛰기 가능.
+// fatigue 는 1–10, soreness 는 1–5 척도.
+export interface ConditionCheckin {
+  fatigue?: number;
+  soreness?: number;
+  note?: string;
+}
+
+export interface CheckinResult {
+  id: number;
+  saved: boolean;
+}

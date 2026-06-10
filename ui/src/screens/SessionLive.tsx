@@ -10,6 +10,7 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { CountingDisplay } from "@/components/CountingDisplay";
 import { QuickButtons } from "@/components/QuickButtons";
 import { ModeSwitch } from "@/components/ModeSwitch";
+import { ConditionCheckin } from "@/components/ConditionCheckin";
 import type { ExerciseMode, SessionMode } from "@/api/types";
 import type { SocketStatus } from "@/api/ws";
 
@@ -59,6 +60,8 @@ export function SessionLive() {
   const wakeLock = useWakeLock();
   const [earphoneHint, setEarphoneHint] = useState(false);
   const [micMode, setMicMode] = useState<MicMode>("live");
+  // 세션 시작 전 컨디션 체크인 모달 (ADR-023). 제출/건너뛰기 후 실제 세션을 시작한다.
+  const [checkinOpen, setCheckinOpen] = useState(false);
 
   // Latest playback state for the streaming callback (half-duplex gate).
   const playingRef = useRef(audio.playing);
@@ -286,7 +289,8 @@ export function SessionLive() {
         {!started ? (
           <button
             type="button"
-            onClick={() => actions.startSession()}
+            // 세션 시작 전 컨디션 체크인을 먼저 띄운다 (ADR-023). 체크인 후 startSession.
+            onClick={() => setCheckinOpen(true)}
             // After 세션 종료 the socket is "closed"; startSession reconnects, so
             // only block while a (re)connect is mid-flight (2026-06-08).
             disabled={status === "connecting" || status === "reconnecting"}
@@ -330,6 +334,15 @@ export function SessionLive() {
           </>
         )}
       </footer>
+
+      {checkinOpen && (
+        <ConditionCheckin
+          onDone={() => {
+            setCheckinOpen(false);
+            actions.startSession();
+          }}
+        />
+      )}
     </div>
   );
 }

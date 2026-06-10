@@ -56,8 +56,54 @@ async def _step_1_drop_s2c_mode(conn: AsyncConnection) -> None:
     await conn.execute(text("UPDATE session SET mode = 's2s' WHERE mode = 's2c'"))
 
 
+async def _step_2_condition_checkin(conn: AsyncConnection) -> None:
+    """ADR-023: 컨디션 체크인 — ``condition_log.soreness`` 추가 + ``session_id`` nullable.
+
+    create_all 은 기존 테이블을 ALTER 하지 않으므로 구 스키마(``session_id`` NOT NULL,
+    ``soreness`` 없음)를 SQLite 테이블 재작성으로 옮긴다. SQLite 는 컬럼 nullability 를
+    직접 바꿀 수 없어 새 테이블 생성 → 복사 → DROP → RENAME 이 정석이다.
+
+    멱등: 새 DB(create_all 이 이미 최신 스키마 생성) 또는 이미 적용된 경우 즉시 반환한다.
+    condition_log 를 FK 로 참조하는 테이블이 없어 재작성이 안전하다.
+    """
+    rows = (await conn.execute(text("PRAGMA table_info(condition_log)"))).all()
+    if not rows:
+        return  # 테이블 부재(create_all 전) — 발생하지 않음
+    by_name = {r[1]: r for r in rows}  # (cid, name, type, notnull, dflt, pk)
+    has_soreness = "soreness" in by_name
+    sid = by_name.get("session_id")
+    session_notnull = bool(sid[3]) if sid is not None else False
+    if has_soreness and not session_notnull:
+        return  # 이미 최신/마이그레이션 완료
+    soreness_src = "soreness" if has_soreness else "NULL"
+    await conn.execute(
+        text(
+            "CREATE TABLE condition_log_new ("
+            " id INTEGER NOT NULL PRIMARY KEY,"
+            " session_id INTEGER,"
+            " logged_at DATETIME NOT NULL,"
+            " fatigue_level INTEGER,"
+            " soreness INTEGER,"
+            " pain_report VARCHAR,"
+            " notes VARCHAR,"
+            " FOREIGN KEY(session_id) REFERENCES session (id))"
+        )
+    )
+    await conn.execute(
+        text(
+            "INSERT INTO condition_log_new"
+            " (id, session_id, logged_at, fatigue_level, soreness, pain_report, notes)"
+            f" SELECT id, session_id, logged_at, fatigue_level, {soreness_src},"
+            " pain_report, notes FROM condition_log"
+        )
+    )
+    await conn.execute(text("DROP TABLE condition_log"))
+    await conn.execute(text("ALTER TABLE condition_log_new RENAME TO condition_log"))
+
+
 _STEPS: list[MigrationStep] = [
     _step_1_drop_s2c_mode,
+    _step_2_condition_checkin,
 ]
 
 

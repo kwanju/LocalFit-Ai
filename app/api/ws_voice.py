@@ -36,6 +36,7 @@ from app.db.engine import create_db_session
 from app.db.models import SessionMode as DBSessionMode
 from app.db.models import SessionStatus
 from app.db.repositories import (
+    ConditionRepository,
     ExerciseRepository,
     MemoryRepository,
     SessionRepository,
@@ -135,6 +136,10 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     if counting_manager is not None:
         counting_manager.attach_inject_processor(counting_inject)
 
+    # Mutable holder for DB session id (set in on_connected). 콜백들이 현재 세션을
+    # 참조해야 하므로 dispatcher 구성보다 먼저 선언한다.
+    _db_session_id: list[int | None] = [None]
+
     # ADR-025 영속 메모리 쓰기 경로 — 액션/안전키워드가 즉시 DB 에 저장(확답 X).
     # SetLog 와 동일하게 콜백마다 새 DB 세션을 연다.
     async def _record_constraint(action) -> None:
@@ -149,6 +154,21 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
             await MemoryRepository(db).add_fact(action.text, tags=action.tags)
         logger.info("memory: fact saved text={}", action.text)
 
+    # ADR-023 컨디션 기록 — 대화 중 LLM 이 log_condition 을 내면 현재 세션에 저장.
+    async def _log_condition(action) -> None:
+        async with create_db_session() as db:
+            await ConditionRepository(db).create(
+                session_id=_db_session_id[0],
+                fatigue_level=action.fatigue_level,
+                soreness=getattr(action, "soreness", None),
+                notes=action.notes,
+            )
+        logger.info(
+            "condition logged: fatigue={} soreness={}",
+            action.fatigue_level,
+            getattr(action, "soreness", None),
+        )
+
     safety = SafetyGuardProcessor(
         counting_manager=counting_manager,
         record_constraint=_record_constraint,
@@ -156,6 +176,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     dispatcher = ActionDispatcherProcessor(
         slot,
         counting_manager=counting_manager,
+        log_condition=_log_condition,
         record_constraint=_record_constraint,
         remember_fact=_remember_fact,
     )
@@ -189,9 +210,6 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     proactive_enabled = bool(
         config and config.coach.proactive_opener and llm_processor is not None
     )
-
-    # Mutable holder for DB session id (set in on_connected).
-    _db_session_id: list[int | None] = [None]
 
     # Wire counting complete → SetLog (매 세트) + auto follow-up (마지막 세트).
     # 2026-06-07: multi-set 지원으로 SetLog는 set 마다, follow-up LLM은 마지막에만.
@@ -269,6 +287,16 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
                     ws_session = await repo.create(mode=db_mode.value)
                     _db_session_id[0] = ws_session.id
                     logger.info("WorkoutSession created: id={}", ws_session.id)
+                    # ADR-023: 세션 전 자가보고 체크인을 이 세션에 연결.
+                    if ws_session.id is not None:
+                        linked = await ConditionRepository(db).link_latest_unlinked(
+                            ws_session.id
+                        )
+                        if linked is not None:
+                            logger.info(
+                                "condition checkin linked: id={} → session={}",
+                                linked.id, ws_session.id,
+                            )
             except Exception as e:  # noqa: BLE001
                 logger.error("WorkoutSession create failed: {}", e)
 

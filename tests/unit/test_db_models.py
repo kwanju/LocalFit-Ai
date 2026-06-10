@@ -121,9 +121,38 @@ async def test_set_log_repository(db_session):
 async def test_condition_repository(db_session):
     ws = await SessionRepository(db_session).create(mode=SessionMode.c2c)
     repo = ConditionRepository(db_session)
-    log = await repo.create(session_id=ws.id, fatigue_level=7, notes="조금 피곤함")
+    log = await repo.create(session_id=ws.id, fatigue_level=7, soreness=3, notes="조금 피곤함")
     assert log.id is not None
     assert log.fatigue_level == 7
+    assert log.soreness == 3
+
+
+async def test_condition_checkin_links_to_session(db_session):
+    """ADR-023: 세션 전 체크인(session_id=None)을 세션 생성 시 연결한다."""
+    repo = ConditionRepository(db_session)
+    checkin = await repo.create(fatigue_level=6, soreness=4, notes="어깨 뻐근")
+    assert checkin.session_id is None  # 세션 전 — nullable 컬럼
+
+    ws = await SessionRepository(db_session).create(mode=SessionMode.c2c)
+    linked = await repo.link_latest_unlinked(ws.id)
+    assert linked is not None
+    assert linked.id == checkin.id
+    assert linked.session_id == ws.id
+
+    # 연결 후엔 세션 조회로 보이고, 미연결 체크인은 더 없다.
+    by_session = await repo.get_by_session(ws.id)
+    assert any(c.id == checkin.id for c in by_session)
+    assert await repo.latest_unlinked() is None
+
+
+async def test_condition_latest_returns_most_recent(db_session):
+    repo = ConditionRepository(db_session)
+    await repo.create(fatigue_level=4)
+    newest = await repo.create(fatigue_level=9, soreness=5)
+    latest = await repo.latest()
+    assert latest is not None
+    assert latest.id == newest.id
+    assert latest.fatigue_level == 9
 
 
 async def test_interaction_repository(db_session):

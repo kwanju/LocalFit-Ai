@@ -32,6 +32,8 @@ class StartCountingAction(BaseModel):
 class LogConditionAction(BaseModel):
     type: Literal["log_condition"] = "log_condition"
     fatigue_level: int = Field(ge=1, le=10)
+    # ADR-023 근육통 1–5 (선택). 강도 조절 *제안*의 입력이며, 자동 변경은 하지 않는다.
+    soreness: int | None = Field(default=None, ge=1, le=5)
     notes: str | None = None
 
 

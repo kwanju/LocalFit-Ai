@@ -22,9 +22,19 @@ class TestActionSchemas:
         assert a.type == "start_counting"
 
     def test_log_condition_valid(self) -> None:
-        a = LogConditionAction(fatigue_level=7, notes="평소보다 무거움")
+        a = LogConditionAction(fatigue_level=7, soreness=4, notes="평소보다 무거움")
         assert a.type == "log_condition"
+        assert a.soreness == 4
         assert a.notes == "평소보다 무거움"
+
+    def test_log_condition_soreness_optional(self) -> None:
+        a = LogConditionAction(fatigue_level=5)
+        assert a.soreness is None
+
+    @pytest.mark.parametrize("soreness", [0, 6, 10])
+    def test_log_condition_soreness_bounds(self, soreness: int) -> None:
+        with pytest.raises(ValidationError):
+            LogConditionAction(fatigue_level=5, soreness=soreness)
 
     @pytest.mark.parametrize(
         "exercise", ["벤치프레스", "데드리프트", "운동", ""]

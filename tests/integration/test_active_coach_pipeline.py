@@ -54,8 +54,13 @@ def _build_coach_pipeline(
 
 
 @pytest.mark.asyncio
-async def test_user_says_start_pushup_dispatches_start_counting() -> None:
-    """C2C: '푸시업 10개 시작' → StartCountingAction reaches the dispatcher."""
+async def test_llm_direct_start_counting_converts_to_proposal() -> None:
+    """C2C: LLM이 사용자 확답 없이 start_counting 을 내면 가드가 *제안*으로 전환한다.
+
+    2026-06-09 가드(ActionDispatcher): 확답 없는 직접 시작은 자동 실행하지 않고
+    ProposeSetAction 으로 슬롯에 남긴다(LLM 이 마음대로 운동을 시작하지 못함). 실제
+    시작은 ConfirmRule 확답 경로로만 일어나며 unit test 로 별도 검증한다.
+    """
     config = load_config()
     cb = AsyncMock()
     slot = ConfirmSlot()
@@ -70,9 +75,11 @@ async def test_user_says_start_pushup_dispatches_start_counting() -> None:
     pipeline = _build_coach_pipeline(llm, slot, start_counting_cb=cb)
     await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="푸시업 10개 시작하자")])
 
-    cb.assert_awaited_once()
-    assert cb.call_args.args[0].exercise == "푸시업"
-    assert cb.call_args.args[0].reps == 10
+    # 가드: 콜백은 호출되지 않고, 제안만 슬롯에 들어간다(자동 시작 금지).
+    cb.assert_not_awaited()
+    assert slot.has_pending
+    assert slot.pending_proposal.exercise == "푸시업"
+    assert slot.pending_proposal.reps == 10
 
 
 @pytest.mark.asyncio

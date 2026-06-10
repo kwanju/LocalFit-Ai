@@ -9,9 +9,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db.engine import init_db
-from app.db.migrations import apply_migrations
+from app.db.migrations import _STEPS, apply_migrations
 from app.db.models import SessionMode
 from app.db.repositories import SessionRepository
+
+# 최신 스키마 버전 = 마이그레이션 스텝 수. 스텝 추가 시 자동으로 따라간다.
+_LATEST_VERSION = len(_STEPS)
 
 
 @pytest.fixture
@@ -20,7 +23,7 @@ async def engine(tmp_path):
         f"sqlite+aiosqlite:///{tmp_path / 'mig.db'}",
         connect_args={"check_same_thread": False},
     )
-    await init_db(engine=eng)  # create_all + apply_migrations (version → 1)
+    await init_db(engine=eng)  # create_all + apply_migrations (version → 최신)
     yield eng
     await eng.dispose()
 
@@ -29,7 +32,7 @@ async def test_schema_version_recorded(engine):
     """init_db 후 schema_version 이 최신(스텝 수)으로 기록된다."""
     async with engine.begin() as conn:
         version = (await conn.execute(text("SELECT version FROM schema_version"))).scalar_one()
-    assert version == 1
+    assert version == _LATEST_VERSION
 
 
 async def test_s2c_row_migrated_to_s2s(engine):
@@ -58,7 +61,7 @@ async def test_s2c_row_migrated_to_s2s(engine):
 
     assert s2c_mode == "s2s"   # s2c → s2s
     assert c2c_mode == "c2c"   # 불변
-    assert version == 1
+    assert version == _LATEST_VERSION
 
 
 async def test_migrations_idempotent(engine):
@@ -67,4 +70,4 @@ async def test_migrations_idempotent(engine):
     await apply_migrations(engine)
     async with engine.begin() as conn:
         version = (await conn.execute(text("SELECT version FROM schema_version"))).scalar_one()
-    assert version == 1
+    assert version == _LATEST_VERSION

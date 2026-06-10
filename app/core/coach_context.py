@@ -32,7 +32,7 @@ class _SetLogRepo(Protocol):
 
 
 class _ConditionRepo(Protocol):
-    async def get_by_session(self, session_id: int) -> list: ...
+    async def latest(self): ...
 
 
 class _RoutineRepo(Protocol):
@@ -129,16 +129,7 @@ class CoachContextBuilder:
         sessions = effective_sessions
         routines = await self.routine_repo.list_all()
 
-        latest_condition: str | None = None
-        if sessions:
-            try:
-                cond_list = await self.condition_repo.get_by_session(sessions[0].id)
-                if cond_list:
-                    last = cond_list[-1]
-                    if last.fatigue_level is not None:
-                        latest_condition = f"최근 피로도 {last.fatigue_level}/10"
-            except Exception:  # noqa: BLE001 — context is best-effort
-                latest_condition = None
+        latest_condition = await self._latest_condition()
 
         signals = await self._calendar_signals()
 
@@ -173,6 +164,33 @@ class CoachContextBuilder:
         if safety_block:
             return f"{safety_block} / {rest}"
         return rest
+
+    async def _latest_condition(self) -> str | None:
+        """가장 최근 자가보고 체크인을 한 줄로(ADR-023). 피로도+근육통+메모 요약.
+
+        세션 연결 여부와 무관하게 ``latest()`` 를 쓰므로 세션 전 체크인(session_id=None)도
+        코치가 본다. 강도 조절 *제안*의 입력 — 컨텍스트는 자동 변경을 하지 않는다.
+        Mock 등 정수 아닌 속성은 isinstance 가드로 걸러 best-effort 로 동작한다.
+        """
+        try:
+            cond = await self.condition_repo.latest()
+        except Exception:  # noqa: BLE001 — context is best-effort
+            return None
+        if cond is None:
+            return None
+        bits: list[str] = []
+        fatigue = getattr(cond, "fatigue_level", None)
+        soreness = getattr(cond, "soreness", None)
+        note = getattr(cond, "notes", None)
+        if isinstance(fatigue, int):
+            bits.append(f"피로도 {fatigue}/10")
+        if isinstance(soreness, int):
+            bits.append(f"근육통 {soreness}/5")
+        if isinstance(note, str) and note.strip():
+            bits.append(f"메모 '{note.strip()[:20]}'")
+        if not bits:
+            return None
+        return "최근 컨디션: " + ", ".join(bits)
 
     async def _safety_block(self) -> str | None:
         """활성 부상/제약 전량을 한 줄로. **절대 잘리지 않는다**(안전 직결)."""

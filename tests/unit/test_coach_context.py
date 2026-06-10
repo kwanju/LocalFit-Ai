@@ -29,8 +29,10 @@ def _routine(name: str):
     return SimpleNamespace(name=name)
 
 
-def _cond(fatigue: int):
-    return SimpleNamespace(fatigue_level=fatigue, pain_report=None, notes=None)
+def _cond(fatigue: int, soreness: int | None = None, notes: str | None = None):
+    return SimpleNamespace(
+        fatigue_level=fatigue, soreness=soreness, pain_report=None, notes=notes
+    )
 
 
 def _set_log(session_id: int = 1):
@@ -46,7 +48,7 @@ def builder() -> CoachContextBuilder:
         session_repo=AsyncMock(get_recent=AsyncMock(return_value=[_session(1)])),
         # 세션 1번은 set_log이 1개 있어 effective_session으로 카운트됨.
         set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[_set_log(1)])),
-        condition_repo=AsyncMock(get_by_session=AsyncMock(return_value=[_cond(7)])),
+        condition_repo=AsyncMock(latest=AsyncMock(return_value=_cond(7))),
         routine_repo=AsyncMock(list_all=AsyncMock(return_value=[_routine("월수금 풀세트")])),
     )
 
@@ -59,9 +61,25 @@ class TestBuild:
         assert "체력 증진" in ctx
         assert "월수금 풀세트" in ctx
         assert "최근 세션 1회" in ctx
-        assert "최근 피로도 7/10" in ctx
+        assert "최근 컨디션: 피로도 7/10" in ctx
         assert "저녁" in ctx
         assert len(ctx) <= 700
+
+    async def test_condition_includes_soreness_and_note(self) -> None:
+        """ADR-023: 컨텍스트에 피로+근육통+메모가 들어간다(세션 독립 latest)."""
+        b = CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(
+                latest=AsyncMock(return_value=_cond(8, soreness=4, notes="어깨 뻐근"))
+            ),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 19, 0))
+        assert "피로도 8/10" in ctx
+        assert "근육통 4/5" in ctx
+        assert "어깨 뻐근" in ctx
 
     async def test_no_profile(self) -> None:
         b = CoachContextBuilder(

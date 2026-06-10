@@ -49,10 +49,27 @@ async def test_log_condition_invokes_callback() -> None:
     slot = ConfirmSlot()
     cb = AsyncMock()
     disp = ActionDispatcherProcessor(slot, log_condition=cb)
-    action = LogConditionAction(fatigue_level=8, notes="다리 무거움")
+    action = LogConditionAction(fatigue_level=8, soreness=4, notes="다리 무거움")
     await _drive(disp, [CoachActionFrame(action=action)])
     cb.assert_awaited_once()
     assert cb.call_args.args[0] == action
+
+
+async def test_log_condition_does_not_change_intensity() -> None:
+    """ADR-023/024 회귀 가드: 컨디션 기록은 사용자 확답 없이 강도를 자동 변경하지 않는다.
+
+    log_condition 디스패치가 카운팅을 시작하거나 제안 슬롯을 채우면 안 된다 — 강도 조절은
+    propose_set → ConfirmRule 확답 경로로만 일어난다."""
+    slot = ConfirmSlot()
+    manager = AsyncMock(is_active=False)
+    disp = ActionDispatcherProcessor(
+        slot, log_condition=AsyncMock(), counting_manager=manager
+    )
+    await _drive(
+        disp, [CoachActionFrame(action=LogConditionAction(fatigue_level=9, soreness=5))]
+    )
+    manager.start.assert_not_called()
+    assert not slot.has_pending
 
 
 async def test_record_constraint_invokes_callback() -> None:

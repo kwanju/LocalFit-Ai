@@ -3,6 +3,8 @@
 // VITE_API_BASE can point elsewhere for a separate deploy.
 
 import type {
+  CheckinResult,
+  ConditionCheckin,
   HealthResponse,
   OnboardingRequest,
   OnboardingStatus,
@@ -68,4 +70,13 @@ export function submitOnboarding(body: OnboardingRequest): Promise<unknown> {
 
 export function listRoutines(): Promise<Routine[]> {
   return request<Routine[]>("/routines");
+}
+
+// 세션 전 자가보고 컨디션 체크인 (ADR-023). session_id 없이 저장되고, 세션 생성 시
+// 백엔드가 연결한다. 선택형이라 실패해도 호출부는 세션을 계속 시작한다.
+export function submitCheckin(body: ConditionCheckin): Promise<CheckinResult> {
+  return request<CheckinResult>("/api/condition/checkin", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

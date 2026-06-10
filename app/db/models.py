@@ -118,12 +118,21 @@ class SetLog(SQLModel, table=True):
 
 
 class ConditionLog(SQLModel, table=True):
+    """자가보고 컨디션 체크인 (ADR-023). 세션 시작 전(또는 일일) 체크인은 ``session_id``
+    없이 저장되고, 세션 생성 시 ``ConditionRepository.link_latest_unlinked`` 가 연결한다.
+
+    ``fatigue_level`` 은 기존(v3) 1–10 척도 유지(LLM ``log_condition``·캘린더 집계와 공유).
+    ``soreness`` 는 ADR-023 의 근육통 1–5 척도(신규).
+    """
+
     __tablename__ = "condition_log"
 
     id: int | None = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="session.id")
+    # nullable — 세션 전 일일 체크인 허용(ADR-023). 세션 생성 시 연결됨.
+    session_id: int | None = Field(default=None, foreign_key="session.id")
     logged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     fatigue_level: int | None = None  # 1–10
+    soreness: int | None = None  # 1–5 (ADR-023 근육통)
     pain_report: str | None = None
     notes: str | None = None
 
