@@ -34,7 +34,7 @@ v1 시점 ADR 16개와 v2 시점 ADR 020/021은 `_archive/v1/`에 보존된다(h
 | [001](001-main-language.md) | 메인 언어로 Python 채택 | Accepted |
 | [002](002-mvp-topology.md) | 토폴로지 — 데스크탑 단독, 127.0.0.1 | Accepted |
 | [003](003-llm-runtime.md) | LLM 런타임 — Ollama | Accepted |
-| [004](004-llm-models.md) | LLM 모델 — qwen3:8b 단일 모델 | Accepted |
+| [004](004-llm-models.md) | LLM 모델 — qwen3:8b 단일 모델 | Superseded by 029 |
 | [005](005-stt.md) | STT — faster-whisper large-v3-turbo + 16kHz 강제 | Accepted |
 | [006](006-tts.md) | TTS — Qwen3-TTS + SDPA 어텐션 + sentence-streaming | Accepted |
 | [007](007-vad-turn-detection.md) | VAD + Turn Detection — silero-vad + Pipecat Smart Turn | Accepted |
@@ -66,7 +66,7 @@ v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v
 | 026 | 운동 종목 — v3 4종 고정 유지 | Deferred | — |
 | 027 | 능동 알림 + 백그라운드 스케줄러 (native) | Proposed (탐사 의존) | — |
 | 028 | 첫 세션 대화형 체력검증 | Proposed | — |
-| 029 | LLM 모델 — qwen3.5:9b (config 교체) | Proposed | 004 |
+| 029 | LLM 모델 — qwen3.5:9b (config 교체) | **Accepted** (2026-06-10) | 004 |
 | 030 | 모델 lifecycle — on-demand 로드/언로드 | Proposed (탐사 의존) | 015 |
 | 031 | UI 플랫폼 — native 데스크탑(Tauri) | Proposed (탐사 의존) | 010 |
 

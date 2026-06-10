@@ -1,7 +1,7 @@
 # ADR-004: LLM 모델 — qwen3:8b 단일 모델
 
-- **상태**: Accepted (2026-05-31)
-- **관련 ADR**: ADR-003 (Ollama), ADR-013 (능동 코치 JSON 출력)
+- **상태**: Superseded by ADR-029 (2026-06-10) — 원 Accepted 2026-05-31. v4 는 qwen3.5:9b 사용.
+- **관련 ADR**: ADR-003 (Ollama), ADR-013 (능동 코치 JSON 출력), ADR-029 (qwen3.5:9b 후속)
 
 ## 컨텍스트
 

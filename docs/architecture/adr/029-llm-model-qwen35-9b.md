@@ -1,6 +1,6 @@
 # ADR-029: LLM 모델 — qwen3:8b → qwen3.5:9b (config 교체)
 
-- **상태**: Proposed (2026-06-10)
+- **상태**: Accepted (2026-06-10) — Tauri 탐사와 독립이라 단독 확정(사용자 결정)
 - **Supersedes**: ADR-004 (qwen3:8b 단일 모델)
 - **관련 ADR**: ADR-003 (Ollama), ADR-013 (능동 코치 JSON 출력), ADR-030 (모델 lifecycle on-demand)
 
