@@ -141,7 +141,7 @@ export class CoachSocket {
   // -- live S2S (streaming VAD) -------------------------------------------
 
   listenStart(): void {
-    // No-op: in Pipecat, audio streaming starts automatically in S2S/S2C modes.
+    // No-op: in Pipecat, audio streaming starts automatically in S2S mode.
     // Kept for backward-compat with session.tsx action calls.
   }
 

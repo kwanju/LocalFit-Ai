@@ -1,13 +1,12 @@
-"""pipeline_builder — assembles a Pipecat Pipeline for a given 4-mode session.
+"""pipeline_builder — assembles a Pipecat Pipeline for a given 3-mode session.
 
-ADR-009 §4-모드 분리:
+ADR-009 §모드 분리 (ADR-021: S2C 제거 → 3모드):
   S2S : STT on  + TTS on
   C2S : STT off + TTS on   (UI sends TextFrame directly)
   C2C : STT off + TTS off
-  S2C : STT on  + TTS off
 
 VAD (ADR-007/011): SileroVADAnalyzer drives a VADProcessor inserted between the
-transport input and STT for S2S/S2C. Smart Turn is structurally allowed but
+transport input and STT for S2S. Smart Turn is structurally allowed but
 gated by `config.vad.use_smart_turn` (default false, P1).
 
 Phase 5 (ADR-013): SafetyGuard → ConfirmRule → StructuredOllama →
@@ -38,14 +37,13 @@ from app.pipecat_services.mock_tts_service import MockTTSService
 from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
-from app.pipecat_services.processors.ui_control import UIControlProcessor
 
 
 class SessionMode(StrEnum):
+    # ADR-021: S2C 제거 → 3모드(S2S/C2S/C2C).
     s2s = "S2S"
     c2s = "C2S"
     c2c = "C2C"
-    s2c = "S2C"
 
 
 def build_pipeline(
@@ -68,7 +66,7 @@ def build_pipeline(
 
     Args:
         transport: The FastAPIWebsocketTransport to use for I/O.
-        mode: One of S2S / C2S / C2C / S2C.
+        mode: One of S2S / C2S / C2C.
         llm_processor: Override default MockLLMProcessor (phase-5 wires
             ``StructuredOllamaProcessor`` here).
         stt_service: Override default MockSTTService.
@@ -106,7 +104,7 @@ def build_pipeline(
     if ui_control is not None:
         processors.append(ui_control)
 
-    use_stt = mode in (SessionMode.s2s, SessionMode.s2c)
+    use_stt = mode is SessionMode.s2s
     use_tts = mode in (SessionMode.s2s, SessionMode.c2s)
 
     if use_stt:

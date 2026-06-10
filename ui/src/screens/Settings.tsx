@@ -12,7 +12,6 @@ const MODE_LABELS: Record<SessionMode, string> = {
   c2c: "채팅·채팅 (조용히)",
   c2s: "채팅·음성 (헬스장)",
   s2s: "음성·음성 (집)",
-  s2c: "음성·채팅",
 };
 
 const ADAPTER_LABELS: Record<"llm" | "stt" | "tts", string> = {
@@ -23,7 +22,8 @@ const ADAPTER_LABELS: Record<"llm" | "stt" | "tts", string> = {
 
 export function readDefaultMode(): SessionMode {
   const saved = localStorage.getItem(DEFAULT_MODE_KEY);
-  if (saved === "c2c" || saved === "c2s" || saved === "s2s" || saved === "s2c") return saved;
+  // ADR-021: s2c 제거 — 과거에 저장된 "s2c"는 더 이상 유효하지 않으므로 기본값으로.
+  if (saved === "c2c" || saved === "c2s" || saved === "s2s") return saved;
   return "c2c";
 }
 

@@ -36,6 +36,7 @@ async def init_db(engine: AsyncEngine | None = None) -> None:
     Accepts an optional engine for test isolation (bypasses config.yaml loading).
     """
     import app.db.models  # noqa: F401 — registers all SQLModel metadata
+    from app.db.migrations import apply_migrations
 
     if engine is None:
         engine = _get_engine()
@@ -44,6 +45,10 @@ async def init_db(engine: AsyncEngine | None = None) -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.execute(text("PRAGMA synchronous=NORMAL"))
+
+    # create_all 이후 — 기존 테이블 컬럼 추가/데이터 변환은 마이그레이션 스텝이 처리
+    # (ADR-021 s2c→s2s 등). 새 테이블은 create_all 이 이미 만든다 (phase v4-1).
+    await apply_migrations(engine)
 
     await _seed_exercises(engine)
 

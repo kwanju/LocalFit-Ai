@@ -1,7 +1,8 @@
 // Protocol types for the Pipecat JSON frame WebSocket transport (phase-7).
 // Replaces v1 ws_coach.py custom protocol with JsonFrameSerializer messages.
 
-export type SessionMode = "s2s" | "c2s" | "c2c" | "s2c";
+// ADR-021: S2C(음성입력→텍스트출력) 제거 → 3모드.
+export type SessionMode = "s2s" | "c2s" | "c2c";
 export type ExerciseMode = "metronome" | "timer";
 
 export type DangerLevel = "low" | "moderate" | "high" | "emergency";
@@ -13,7 +14,7 @@ export type FitnessLevel = "beginner" | "intermediate" | "advanced";
 
 export type ClientMessage =
   | { type: "text"; text: string }
-  // PCM16LE audio chunk (streaming S2S/S2C) — base64 encoded
+  // PCM16LE audio chunk (streaming S2S) — base64 encoded
   | { type: "audio"; data: string; sample_rate: number }
   | { type: "interrupt" }
   // Control messages — routed to UIControlProcessor via InputTransportMessageFrame

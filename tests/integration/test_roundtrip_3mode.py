@@ -1,7 +1,7 @@
 """PRD §7-1 자동 검증 9종 통합 테스트 (phase-7).
 
 Covers:
-1. 4-모드 라운드트립 (C2C / C2S / S2C / S2S)
+1. 3-모드 라운드트립 (C2C / C2S / S2S) — ADR-021 (S2C 제거)
 2. 박자 정확도 ±10% (CountingEngine 단위, v1 재활용)
 3. 사용자 발화 카운팅 자동 시작 (StartCountingAction → CountingManager)
 4. 능동 코치 인사 + 추천 + 확답 → 자동 실행
@@ -96,7 +96,7 @@ def _build_active_coach_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# 검증 1: 4-모드 라운드트립 (pipeline_builder topology)
+# 검증 1: 3-모드 라운드트립 (pipeline_builder topology) — ADR-021 (S2C 제거)
 # ---------------------------------------------------------------------------
 
 
@@ -106,11 +106,10 @@ def _build_active_coach_pipeline(
         (SessionMode.s2s, True, True),
         (SessionMode.c2s, False, True),
         (SessionMode.c2c, False, False),
-        (SessionMode.s2c, True, False),
     ],
 )
-def test_4mode_pipeline_topology(mode: SessionMode, has_stt: bool, has_tts: bool) -> None:
-    """4-모드 파이프라인이 올바른 STT/TTS 노드를 포함한다."""
+def test_3mode_pipeline_topology(mode: SessionMode, has_stt: bool, has_tts: bool) -> None:
+    """3-모드 파이프라인이 올바른 STT/TTS 노드를 포함한다."""
     transport = _make_transport_stub()
     pipeline = build_pipeline(transport, mode)  # type: ignore[arg-type]
     procs = list(pipeline.processors)  # type: ignore[attr-defined]
@@ -136,8 +135,8 @@ async def test_c2c_roundtrip_text_in_text_out() -> None:
 
 
 @pytest.mark.asyncio
-async def test_s2c_roundtrip_audio_in_text_out() -> None:
-    """S2C: VAD audio → STT TranscriptionFrame → MockLLM TextFrame."""
+async def test_s2s_stt_audio_to_transcription() -> None:
+    """S2S: VAD audio → STT TranscriptionFrame (음성 입력 경로 — ADR-021)."""
     from pipecat.frames.frames import (
         AudioRawFrame,
         VADUserStartedSpeakingFrame,

@@ -1,8 +1,8 @@
 """WebSocket /ws/voice — Pipecat pipeline mount (ADR-009/011).
 
-Query param: ?mode=S2S|C2S|C2C|S2C  (default: C2C)
+Query param: ?mode=S2S|C2S|C2C  (default: C2C)
 
-Phase 4: real STT (faster-whisper) + silero VAD wired in for S2S/S2C.
+Phase 4: real STT (faster-whisper) + silero VAD wired in for S2S.
 Phase 5: SafetyGuard / ConfirmRule / StructuredOllama / ActionDispatcher
 processors compose the active-coach pipeline (ADR-013). The proactive opener
 runs once per session when ``config.coach.proactive_opener`` is true.
@@ -74,7 +74,7 @@ def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
 
 @router.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
-    """Pipecat 4-mode voice pipeline endpoint."""
+    """Pipecat 3-mode voice pipeline endpoint (C2C/C2S/S2S — ADR-021)."""
     try:
         session_mode = SessionMode(mode.upper())
     except ValueError:
@@ -88,7 +88,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     await websocket.accept()
 
     config: AppConfig | None = getattr(websocket.app.state, "config", None)
-    use_stt = session_mode in (SessionMode.s2s, SessionMode.s2c)
+    use_stt = session_mode is SessionMode.s2s
     audio_in_sr = config.vad.sample_rate if (config and use_stt) else 16000
 
     transport = FastAPIWebsocketTransport(

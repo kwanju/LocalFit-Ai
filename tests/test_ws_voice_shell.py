@@ -2,8 +2,8 @@
 
 Covers:
 - MockLLMProcessor: TextFrame → echo TextFrame (C2C roundtrip)
-- MockLLMProcessor: TranscriptionFrame → echo TextFrame (S2S/S2C LLM step)
-- MockSTTService: VAD-triggered AudioRawFrame → TranscriptionFrame (S2S/S2C STT step)
+- MockLLMProcessor: TranscriptionFrame → echo TextFrame (S2S LLM step)
+- MockSTTService: VAD-triggered AudioRawFrame → TranscriptionFrame (S2S STT step)
 - MockTTSService: TextFrame → TTSAudioRawFrame (C2S/S2S TTS step)
 - pipeline_builder: mode-based processor topology check
 
@@ -56,7 +56,7 @@ async def test_c2c_llm_text_echo() -> None:
 
 
 # ---------------------------------------------------------------------------
-# S2C / S2S: MockLLMProcessor — TranscriptionFrame in → echo TextFrame out
+# S2S: MockLLMProcessor — TranscriptionFrame in → echo TextFrame out
 # ---------------------------------------------------------------------------
 
 
@@ -79,7 +79,7 @@ async def test_stt_to_llm_transcription_echo() -> None:
 
 
 # ---------------------------------------------------------------------------
-# S2S / S2C: MockSTTService — VAD events + AudioRawFrame → TranscriptionFrame
+# S2S: MockSTTService — VAD events + AudioRawFrame → TranscriptionFrame
 # ---------------------------------------------------------------------------
 
 
@@ -166,7 +166,6 @@ def _make_transport_stub():
         (SessionMode.s2s, True, True),
         (SessionMode.c2s, False, True),
         (SessionMode.c2c, False, False),
-        (SessionMode.s2c, True, False),
     ],
 )
 def test_pipeline_topology(mode: SessionMode, has_stt: bool, has_tts: bool) -> None:

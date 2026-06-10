@@ -9,11 +9,11 @@ interface ModeMeta {
   hint: string;
 }
 
+// ADR-021: S2C 제거 → 3모드.
 const MODES: readonly ModeMeta[] = [
   { mode: "c2c", label: "채팅·채팅", hint: "조용히" },
   { mode: "c2s", label: "채팅·음성", hint: "헬스장" },
   { mode: "s2s", label: "음성·음성", hint: "집" },
-  { mode: "s2c", label: "음성·채팅", hint: "답만" },
 ];
 
 interface ModeSwitchProps {

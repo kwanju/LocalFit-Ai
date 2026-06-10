@@ -13,7 +13,7 @@ import { ModeSwitch } from "@/components/ModeSwitch";
 import type { ExerciseMode, SessionMode } from "@/api/types";
 import type { SocketStatus } from "@/api/ws";
 
-const VOICE_INPUT: ReadonlySet<SessionMode> = new Set<SessionMode>(["s2s", "s2c"]);
+const VOICE_INPUT: ReadonlySet<SessionMode> = new Set<SessionMode>(["s2s"]);
 const VOICE_OUTPUT: ReadonlySet<SessionMode> = new Set<SessionMode>(["s2s", "c2s"]);
 
 const STATUS_LABEL: Record<SocketStatus, string> = {

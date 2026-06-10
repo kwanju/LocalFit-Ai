@@ -1,4 +1,4 @@
-"""Phase 4 §4-8 — S2C 라운드트립: audio (+VAD) → TranscriptionFrame → TextFrame.
+"""Phase 4 §4-8 — S2S STT 라운드트립: audio (+VAD) → TranscriptionFrame → TextFrame.
 
 LocalFitWhisperSTTService + MockLLMProcessor 만 결합한 in-process 파이프라인을
 `pipecat.tests.utils.run_test` 로 흘려, 발화 시뮬레이션(VAD start/audio/VAD stop)이
@@ -35,8 +35,8 @@ class _FakeWhisperClient:
 
 
 @pytest.mark.asyncio
-async def test_s2c_roundtrip_audio_to_llm_echo() -> None:
-    """S2C: audio + VAD → 'echo: 안녕하세요' TextFrame."""
+async def test_s2s_stt_roundtrip_audio_to_llm_echo() -> None:
+    """S2S: audio + VAD → 'echo: 안녕하세요' TextFrame (STT 입력 경로 — ADR-021)."""
     stt = LocalFitWhisperSTTService(_FakeWhisperClient(text="안녕하세요"))
     llm = MockLLMProcessor()
     pipeline = Pipeline([stt, llm])

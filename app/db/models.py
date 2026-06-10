@@ -20,10 +20,11 @@ class CountingMode(StrEnum):
 
 
 class SessionMode(StrEnum):
+    # v4 (ADR-021): S2C(음성입력→텍스트출력) 제거 → 3모드. 기존 s2c 행은
+    # app/db/migrations.py 가 s2s 로 변환.
     s2s = "s2s"
     c2s = "c2s"
     c2c = "c2c"
-    s2c = "s2c"
 
 
 class SessionStatus(StrEnum):
