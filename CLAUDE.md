@@ -42,6 +42,7 @@ LocalFit AI는 로컬 LLM 기반 개인 AI 피트니스 코치 데스크탑 앱�
 5-1. **`docs/testing-strategy.md` — 시나리오 기반 심층 테스트 전략** (버그를 사용자가 아니라 에이전트가 먼저 잡는 절차. 버그 보고 받으면 여기 §4 루프대로 직접 시나리오 구동·로그검토·박제)
 6. 현재 작업의 `docs/agent-tasks/phase-XX-*.md` 작업 명세 (있다면)
 7. **v4 시작 시**: `docs/future/v4-vision.md` (deep interview 질문 §6 참조)
+8. 외부 레퍼런스 원본은 `docs/raw/`에 보관. ADR에는 링크만.
 
 > faster-qwen3-tts 통합은 완료(2026-06-08). 회고/실측은 `docs/_archive/v3/faster-qwen3-tts.md`.
 
@@ -57,7 +58,7 @@ v1 시점 ADR이 궁금하면 `_archive/v1/` 참조. v3-rewrite ADR 결정과 �
 - ❌ `# TODO: 나중에 구현` placeholder — 함수는 완전히 구현하거나 아예 만들지 마라
 - ❌ 폴더 구조 임의 변경 (`src/`, `lib/` 등으로 — 아래 4번 구조 고정)
 - ❌ 마이크로서비스, K8s, CI/CD 같은 1인 프로젝트 부적합 패턴
-- ❌ 데스크탑 패키징(pywebview, PyInstaller, Electron, Tauri) 재시도 — ADR-010에서 폐기
+- ❌ pywebview / PyInstaller / Electron 데스크탑 패키징 — v2에서 폐기. **단 Tauri 는 예외**: v4에서 채택 확정(ADR-031, Phase v4-0 탐사 GO). UI 셸 = Tauri 데스크탑 + FastAPI 사이드카. ADR-010(PWA only)은 Superseded.
 - ❌ **자체 음성 파이프라인 작성** — Pipecat 사용 (ADR-011). v1 자체 `/ws/coach` 패턴 재도입 금지
 - ❌ Domain Core에 Pipecat·FastAPI·SQLModel·transformers import — ADR-012 위반
 - ❌ XTTS v2 / Kokoro 재도입 — ADR-006에서 폐기 (Qwen3-TTS만 사용)
