@@ -1,6 +1,6 @@
 # ADR-030: 모델 lifecycle — on-demand 로드/언로드
 
-- **상태**: Proposed (★ 탐사 의존 — Phase v4-0 S-8 통과 전제)
+- **상태**: Accepted (2026-06-10) — Phase v4-0 탐사 S-8(VRAM lifecycle) PASS 로 Proposed→Accepted 승격
 - **Supersedes**: ADR-015 (모델 동시 상주 — keep_alive 24h)
 - **관련 ADR**: ADR-003 (Ollama), ADR-005 (STT), ADR-006 (TTS), ADR-029 (LLM 모델)
 
@@ -46,10 +46,10 @@ v4 사용자 요구(§6-8)가 이 트레이드오프를 뒤집는다:
 - 로드/언로드 코드 + VRAM 반환 검증 필요(메모리 누수 주의)
 - 잦은 세션 전환 시 반복 로드 비용
 
-## 탐사 의존 / no-go 대응
+## 탐사 결과 (2026-06-10 — GO)
 
-- **의존**: Phase v4-0 S-8 — 세션 종료 후 `nvidia-smi`로 VRAM 반환 확인 + 콜드스타트 실측.
-- **no-go 시**(언로드가 깨끗이 안 되거나 콜드스타트가 비현실적): ADR-015(상주) 유지 + 32GB 권장 사양으로 후퇴, 16GB 베이스라인 재검토.
+- **PASS (S-8)**: `spike_vram_lifecycle.py` 실측 — 세션 중 STT 2.0 + TTS 4.6 + LLM(qwen3.5:9b) 5.6 ≈ **12.2GB** 점유, 세션 종료 후 `torch.cuda.empty_cache()` + Ollama `keep_alive=0`로 **VRAM 완전 반환** 확인. 평소(세션 밖) 무거운 모델 미상주. 콜드스타트 **~30s**(TTS CUDA graph 캡처가 지배적) → 위 완화 (a)(b)(c)로 단축, 구현 phase 에서 실측.
+- **no-go 였다면**: ADR-015(상주) 유지 + 32GB 권장 사양으로 후퇴, 16GB 베이스라인 재검토 — 채택 안 됨.
 
 ## 대안
 

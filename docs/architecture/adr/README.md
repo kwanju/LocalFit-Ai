@@ -40,12 +40,12 @@ v1 시점 ADR 16개와 v2 시점 ADR 020/021은 `_archive/v1/`에 보존된다(h
 | [007](007-vad-turn-detection.md) | VAD + Turn Detection — silero-vad + Pipecat Smart Turn | Accepted |
 | [008](008-db-orm.md) | DB — SQLite + SQLModel | Accepted |
 | [009](009-backend-transport.md) | 백엔드 — FastAPI + Pipecat FastAPIWebsocketTransport | Accepted |
-| [010](010-ui-framework.md) | UI — React + Vite PWA (브라우저, 데스크탑 패키징 없음) | Accepted |
+| [010](010-ui-framework.md) | UI — React + Vite PWA (브라우저, 데스크탑 패키징 없음) | Superseded by 031 |
 | [011](011-voice-pipeline-pipecat.md) | **음성 파이프라인 — Pipecat 전면 채택** | Accepted |
 | [012](012-domain-adapter-contract.md) | Pipecat 위 도메인 어댑터·서비스 계약 | Accepted |
 | [013](013-active-coach.md) | **능동 코치 — instructor + JSON 구조화 출력 + 액션 디스패치** | Accepted |
 | [014](014-counting-engine.md) | 카운팅 엔진 — 메트로놈/타이머 + LLM 트리거 | Accepted |
-| [015](015-model-concurrency.md) | 모델 동시 상주 — Ollama keep_alive 24h + GPU 메모리 예산 | Accepted |
+| [015](015-model-concurrency.md) | 모델 동시 상주 — Ollama keep_alive 24h + GPU 메모리 예산 | Superseded by 030 |
 | [016](016-model-download.md) | 모델 다운로드 — 첫 실행 setup 스크립트 + HF/Ollama 캐시 | Accepted |
 | [017](017-package-manager.md) | 패키지 매니저 — uv + pnpm | Accepted |
 | [018](018-logging-observability.md) | 로깅·관측성 — loguru + 파일 + 지연 메트릭 | Accepted |
@@ -54,7 +54,7 @@ v1 시점 ADR 16개와 v2 시점 ADR 020/021은 `_archive/v1/`에 보존된다(h
 
 ## v4 시리즈 인덱스 (진행 중 — 2026-06-10~)
 
-v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v4 ADR 은 v3 와 충돌 시 **v4 가 우선**(v3 master 동결). native 의존 ADR(027/030/031)은 **Phase v4-0 Tauri 탐사**(`docs/agent-tasks/v4/phase-0-tauri-spike.md`) 통과 후 Accepted.
+v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v4 ADR 은 v3 와 충돌 시 **v4 가 우선**(v3 master 동결). native 의존 ADR(027/030/031)은 **Phase v4-0 Tauri 탐사**(`docs/agent-tasks/v4/phase-0-tauri-spike.md`) **GO 확정(2026-06-10)** 으로 Accepted 승격됨.
 
 | # | 제목 | 상태 | supersedes |
 |---|---|---|---|
@@ -64,13 +64,13 @@ v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v
 | 024 | 운동 플랜 — 주간 목표 + 조정은 확인 | Proposed | — |
 | 025 | 영속 메모리 — SQLite 구조화+자유텍스트, 부상/제약 전량 주입 | Proposed | — |
 | 026 | 운동 종목 — v3 4종 고정 유지 | Deferred | — |
-| 027 | 능동 알림 + 백그라운드 스케줄러 (native) | Proposed (탐사 의존) | — |
+| 027 | 능동 알림 + 백그라운드 스케줄러 (native) | **Accepted** (2026-06-10) | — |
 | 028 | 첫 세션 대화형 체력검증 | Proposed | — |
 | 029 | LLM 모델 — qwen3.5:9b (config 교체) | **Accepted** (2026-06-10) | 004 |
-| 030 | 모델 lifecycle — on-demand 로드/언로드 | Proposed (탐사 의존) | 015 |
-| 031 | UI 플랫폼 — native 데스크탑(Tauri) | Proposed (탐사 의존) | 010 |
+| 030 | 모델 lifecycle — on-demand 로드/언로드 | **Accepted** (2026-06-10) | 015 |
+| 031 | UI 플랫폼 — native 데스크탑(Tauri) | **Accepted** (2026-06-10) | 010 |
 
-> 표기: native 의존 ADR 은 탐사 go 전까지 Proposed. 탐사 no-go 시 027/030/031 은 폐기/수정되고 010/015 가 유지된다.
+> Phase v4-0 Tauri 탐사 **GO**(`docs/agent-tasks/v4/phase-0-tauri-spike-result.md`)로 native 의존 ADR 027/030/031 을 Accepted 승격하고 010/015 를 Superseded 로 갱신함(2026-06-10). 후속 fix(비차단): S-4 마이크 입력(webview2 권한)·S-6 toast 클릭 흐름 — 구현 phase 에서 마무리.
 
 ## v1과 비교한 주요 변경
 

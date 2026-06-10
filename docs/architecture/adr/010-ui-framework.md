@@ -1,7 +1,7 @@
 # ADR-010: UI — React + Vite PWA (브라우저 사용, 데스크탑 패키징 없음)
 
-- **상태**: Accepted (2026-05-31)
-- **관련 ADR**: ADR-002 (토폴로지), ADR-009 (transport)
+- **상태**: **Superseded by ADR-031** (2026-06-10) — v4 에서 Tauri native 데스크탑 채택. 아래 결정 중 "데스크탑 패키징 미시도" 조항이 무효화됨. **단 React/Vite/Tailwind UI 자체와 4-모드(v4 는 3-모드)·마이크/카운팅 UX 는 ADR-031 에서 Tauri 웹뷰에 그대로 재사용**된다(폐기 아님). 무효화된 것은 "브라우저 only / 패키징 폐기" 부분뿐.
+- **관련 ADR**: ADR-002 (토폴로지), ADR-009 (transport), ADR-031 (Tauri — supersedes)
 
 ## 컨텍스트
 

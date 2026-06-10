@@ -1,7 +1,7 @@
 # ADR-015: 모델 동시 상주 — Ollama keep_alive 24h + GPU 메모리 예산
 
-- **상태**: Accepted (2026-05-31)
-- **관련 ADR**: ADR-003 (Ollama), ADR-005 (STT), ADR-006 (TTS)
+- **상태**: **Superseded by ADR-030** (2026-06-10) — v4 에서 on-demand 로드/언로드 채택(게임과 VRAM 공존이 콜드스타트 0보다 우선). 아래 `keep_alive: 24h` + lifespan 상시 warmup 정책은 무효. GPU 메모리 측정(`mem_get_info`)·동시추론 직렬화 등 관측/직렬화 부분은 ADR-030 에서도 유효.
+- **관련 ADR**: ADR-003 (Ollama), ADR-005 (STT), ADR-006 (TTS), ADR-030 (on-demand lifecycle — supersedes)
 
 ## 컨텍스트
 

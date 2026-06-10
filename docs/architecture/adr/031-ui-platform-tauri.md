@@ -1,6 +1,6 @@
 # ADR-031: UI 플랫폼 — native 데스크탑 (Tauri)
 
-- **상태**: Proposed (★ 탐사 의존 — Phase v4-0 S-1~S-5 통과 전제)
+- **상태**: Accepted (2026-06-10) — Phase v4-0 Tauri 탐사 GO 확정으로 Proposed→Accepted 승격
 - **Supersedes**: ADR-010 (React PWA, 데스크탑 패키징 없음)
 - **관련 ADR**: ADR-009 (FastAPI + Pipecat WS), ADR-027 (native 알림), ADR-030 (모델 lifecycle)
 
@@ -36,10 +36,12 @@ v2 와 같은 함정을 피하기 위해 **Phase v4-0 Tauri 탐사**로 먼저 �
 - Rust 툴체인 + Tauri 빌드 학습/유지 비용
 - 사이드카로 Python+모델 번들 시 배포 크기 큼(번들 전략 후순위)
 
-## 탐사 의존 / no-go 대응
+## 탐사 결과 (2026-06-10 — GO 확정)
 
-- **의존**: Phase v4-0 S-1(빌드)·S-2(웹뷰 탑재)·S-3(WS)·S-4(마이크/오디오)·S-5(사이드카) 통과.
-- **no-go 시**: ADR-010(PWA) 유지. ADR-027(알림)을 PWA 범위로 축소, ADR-030 도 재검토. 비전 §0-2 수정. **v2 처럼 무한정 매달리지 않고 timebox 내 후퇴**(회고 4-4).
+- Phase v4-0 탐사로 검증 완료(`docs/agent-tasks/v4/phase-0-tauri-spike-result.md`). 결과 **GO**.
+- **PASS**: S-1(빌드 — installer 2MB, Rust 1.59→1.96 rustup 갱신으로 통과)·S-2(기존 React UI 재작성 0 탑재, 실세션 검증)·S-3(WS 라운드트립)·S-5(사이드카 spawn/tree-kill — uv→python 손자 고아 버그 잡고 `taskkill /T`로 수정).
+- **후속 fix(비차단)**: S-4 마이크 입력(webview2 `getUserMedia` 권한)은 집 환경에서 미검증 → GO 차단이 아닌 후속 fix 항목으로 이월(오디오 **출력**은 통과). S-6 toast 클릭→포커스도 후속. 런북: spike-result §5.
+- **no-go 였다면**: ADR-010(PWA) 유지, ADR-027 을 PWA 범위로 축소, ADR-030 재검토 — 채택 안 됨.
 
 ## 대안
 

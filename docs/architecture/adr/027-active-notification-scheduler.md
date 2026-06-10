@@ -1,6 +1,6 @@
 # ADR-027: 능동 알림 + 백그라운드 스케줄러
 
-- **상태**: Proposed (★ 탐사 의존 — Phase v4-0 S-6/S-7 통과 전제)
+- **상태**: Accepted (2026-06-10) — Phase v4-0 탐사 S-6/S-7 PASS 로 Proposed→Accepted 승격
 - **관련 ADR**: ADR-031 (native Tauri — 알림 채널), ADR-022 (캘린더 — 일정 소스), ADR-021 (세션 모델 + 스케줄러)
 
 ## 컨텍스트
@@ -34,10 +34,11 @@ PWA(브라우저 Notification)는 브라우저가 닫히면 알림이 오지 않
 - OS 알림 설정/권한에 종속
 - 백그라운드 상주 프로세스 관리(좀비/중복 방지)
 
-## 탐사 의존 / no-go 대응
+## 탐사 결과 (2026-06-10 — GO)
 
-- **의존**: Phase v4-0 S-6(toast)·S-7(트레이 상주) 통과.
-- **no-go 시**: PWA Notification API(브라우저 열려 있을 때만)로 축소하고, 능동 알림 범위를 "앱 사용 중 리마인드"로 한정. 비전 §0-2 수정.
+- **PASS**: S-6(native toast 표시)·S-7(트레이 상주) 통과(`phase-0-tauri-spike-result.md`). ADR-031(Tauri) GO 로 native 채널 확정.
+- **후속 fix(비차단)**: toast **클릭 → 앱 포커스 + 세션 시작** 흐름은 표시까지만 검증됨 → 구현 phase 에서 마무리.
+- **no-go 였다면**: PWA Notification(브라우저 열려 있을 때만)로 축소, 능동 알림을 "앱 사용 중 리마인드"로 한정 — 채택 안 됨.
 
 ## 대안
 
