@@ -22,11 +22,11 @@ v4 구현 phase 인덱스. v3(master 동결)을 base 로, ADR-021~031 을 구현
 | # | Phase | 핵심 산출물 | 관련 ADR | 의존 |
 |---|---|---|---|---|
 | 0 | [Tauri 탐사 (완료·GO)](phase-0-tauri-spike.md) | S-1~S-8 검증, go/no-go 게이트 | 027·030·031 | — |
-| 1 | v4 base 정리 + 3모드 + 모델 config | `v4-rewrite` 정리, **S2C 제거 → 3모드(C2C/C2S/S2S)**, `config.llm.model=qwen3.5:9b`, v3→v4 DB 스키마 확장 스캐폴드 | 021, 029 | 0 |
-| 2 | 영속 메모리 | SQLite **구조화(부상·제약) + 자유텍스트 메모** 하이브리드 + Repository + `CoachContextBuilder` 에 부상/제약 **전량 주입** | 025 | 1 |
-| 3 | 컨디션 트래킹 | 자가보고 체크인(피로/근육통, 로컬-only) 저장 + 코치가 컨디션 읽어 **강도 조절 제안(확인)** | 023 | 2 |
-| 4 | 운동 플랜 | **주간 목표 + 일자 분배**, 컨디션 결합 자동 제안은 **ConfirmRule 동의**(LLM 임의조정 금지) | 024 | 2, 3 |
-| 5 | 첫 세션 대화형 체력검증 | 단발 `propose_set` → **대화형 plan-building tool-use**, 온보딩 폼 시드 보정 → 메모리 기준선 저장 | 028 | 2, 4 |
+| 1 | [v4 base 정리 + 3모드 + 모델 config](phase-1-base-3mode-config.md) | `v4-rewrite` 정리, **S2C 제거 → 3모드(C2C/C2S/S2S)**, `qwen3.5:9b` 회귀 검증, v3→v4 DB 마이그레이션 스캐폴드 | 021, 029 | 0 |
+| 2 | [영속 메모리](phase-2-persistent-memory.md) | SQLite **구조화(부상·제약) + 자유텍스트 메모** 하이브리드 + Repository + `CoachContextBuilder` 에 부상/제약 **전량 주입** | 025 | 1 |
+| 3 | [컨디션 트래킹](phase-3-condition-tracking.md) | 자가보고 체크인(피로/근육통, 로컬-only) 저장 + 코치가 컨디션 읽어 **강도 조절 제안(확인)** | 023 | 2 |
+| 4 | [운동 플랜](phase-4-workout-plan.md) | **주간 목표 + 일자 분배**, 컨디션 결합 자동 제안은 **ConfirmRule 동의**(LLM 임의조정 금지) | 024 | 2, 3 |
+| 5 | [첫 세션 대화형 체력검증](phase-5-first-session-assessment.md) | 단발 `propose_set` → **대화형 plan-building tool-use**, 온보딩 폼 시드 보정 → 메모리 기준선 저장 | 028 | 2, 4 |
 | 6 | Tauri 셸 통합 (런타임 교체) | 탐사 산출물 제품화: `ui/` Tauri 웹뷰 탑재 + FastAPI **사이드카 lifecycle**(spawn/tree-kill) + 사이드카 사망 감지 UI. **후속 fix: S-4 마이크 입력(webview2 권한)** | 031 | 1 |
 | 7 | 모델 lifecycle on-demand | 세션 시작 GPU 로드 / 종료 언로드(Ollama `keep_alive=0` + `empty_cache()`), **병렬 로드 + 앱-열림 prewarm + "코치 준비 중" UX** 로 콜드스타트(~30s) 단축, VRAM 반환 검증 | 030 | 6 |
 | 8 | 능동 알림 + 백그라운드 스케줄러 | 트레이 상주 경량 스케줄러 + native toast(운동시간/체크인) + **클릭→앱 포커스→세션 시작**(S-6 후속 마무리), 음소거 시간대 | 027 | 6, 4 |
