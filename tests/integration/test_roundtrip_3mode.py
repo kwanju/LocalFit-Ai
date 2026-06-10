@@ -3,7 +3,7 @@
 Covers:
 1. 3-모드 라운드트립 (C2C / C2S / S2S) — ADR-021 (S2C 제거)
 2. 박자 정확도 ±10% (CountingEngine 단위, v1 재활용)
-3. 사용자 발화 카운팅 자동 시작 (StartCountingAction → CountingManager)
+3. 제안 → 사용자 확답 → 카운팅 시작 (ConfirmRule 확답 게이트)
 4. 능동 코치 인사 + 추천 + 확답 → 자동 실행
 5. 일정 변경 5종 시나리오 — LLM mock (ProposeSetAction)
 6. 부상 키워드 즉시 중단 + 면책 (SafetyGuardProcessor)
@@ -32,7 +32,6 @@ from app.config import load_config
 from app.core.coach_response import (
     CoachResponse,
     ProposeSetAction,
-    StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
 from app.pipecat_services.frames import SafetyResponseFrame
@@ -210,26 +209,27 @@ async def test_counting_beat_timing_accuracy() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 검증 3: 사용자 발화 → 카운팅 자동 시작
+# 검증 3: 제안 → 사용자 확답 → 카운팅 시작 (ADR-013 확답 게이트)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_user_utterance_triggers_start_counting() -> None:
-    """'푸시업 10개 시작' → StartCountingAction 디스패치."""
-    config = load_config()
+async def test_user_confirm_triggers_start_counting() -> None:
+    """제안 적재 후 사용자 확답 → StartCountingAction 디스패치.
+
+    ADR-013 확답 게이트(2026-06-07/09 가드): LLM 이 자기 마음대로 발행한 start_counting
+    은 제안으로 강등되고, **제안(propose_set) → 사용자 확답("좋아 시작하자") → ConfirmRule
+    이 dispatcher 가드를 풀고 StartCountingAction emit** 해야만 실제 카운팅이 시작된다.
+    그래서 ConfirmRule 에 dispatcher 참조를 연결한다 (ws_voice.py 실제 배선과 동일).
+    """
     cb = AsyncMock()
     slot = ConfirmSlot()
-    llm = StructuredOllamaProcessor(config)
-    llm._instructor = _instr_mock(
-        CoachResponse(
-            text="푸시업 10개 시작할게요!",
-            actions=[StartCountingAction(exercise="푸시업", reps=10)],
-        )
-    )
+    slot.set(ProposeSetAction(exercise="푸시업", reps=10, sets=1, rest_sec=60))
+    dispatcher = ActionDispatcherProcessor(slot, start_counting=cb)
+    confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
+    pipeline = Pipeline([SafetyGuardProcessor(), confirm, dispatcher])
 
-    pipeline = _build_active_coach_pipeline(llm, slot, start_counting_cb=cb)
-    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="푸시업 10개 시작하자")])
+    await run_test(pipeline, frames_to_send=[InputTextRawFrame(text="좋아 시작하자")])
 
     cb.assert_awaited_once()
     assert cb.call_args.args[0].exercise == "푸시업"
@@ -270,12 +270,14 @@ async def test_proactive_opener_propose_set_lands_in_slot() -> None:
 
 
 @pytest.mark.asyncio
+# ADR-026: v4 는 4종 고정(풀업/푸시업/스쿼트/플랭크) — Exercise Literal 밖 종목 금지.
+# 5번째 시나리오는 4종 내 다른 파라미터 조합으로 커버.
 @pytest.mark.parametrize("exercise,reps,sets,rest_sec", [
     ("풀업", 5, 3, 90),
     ("푸시업", 15, 4, 60),
     ("스쿼트", 20, 3, 90),
     ("플랭크", 30, 2, 120),
-    ("런지", 12, 3, 60),
+    ("푸시업", 12, 3, 60),
 ])
 async def test_propose_set_5_scenarios(
     exercise: str, reps: int, sets: int, rest_sec: int
