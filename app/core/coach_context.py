@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from loguru import logger
+
 _MAX_CONTEXT_CHARS: int = 700
 
 
@@ -178,7 +180,9 @@ class CoachContextBuilder:
             return None
         try:
             constraints = await self.memory_repo.get_constraints()
-        except Exception:  # noqa: BLE001 — never break the prompt
+        except Exception as e:  # noqa: BLE001 — never break the prompt
+            # 안전 직결: 조용히 삼키면 부상/제약 누락을 눈치채지 못한다 (ADR-025 손실 0).
+            logger.error("CoachContext: constraint fetch failed, safety info may drop: {}", e)
             return None
         if not constraints:
             return None
