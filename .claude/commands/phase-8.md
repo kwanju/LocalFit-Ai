@@ -1,15 +1,12 @@
 ---
-description: Phase 8 — 운동 캘린더 (react-activity-calendar) + 코치 컨텍스트 강화
+description: Phase v4-8 — 능동 알림 + 백그라운드 스케줄러 (트레이 toast → 세션) (027)
 ---
-`docs/agent-tasks/phase-8-workout-calendar.md` 의 작업을 수행해줘.
+`docs/agent-tasks/v4/phase-8-active-notifications.md` 의 작업을 수행해줘.
 
 규칙:
-- 먼저 `CLAUDE.md` 와 phase 명세의 "관련 ADR"에 적힌 ADR(020, 013, 008, 012)만 읽어라.
-- ADR-020이 본 phase의 단일 진실 소스. 라이브러리 = `react-activity-calendar` (pnpm add).
-- 강도 산정 식 = volume 기반 level 0~4 (ADR-020 §"강도 산정 식").
-- `app/core/calendar_metrics.py` 신규 — 순수 함수만 (4계층 분리, ADR-012).
-- `GET /api/calendar?from=...&to=...` 신규.
-- `CoachContextBuilder.build()`에 주간 패턴·마지막 운동·휴식 streak inject (ADR-013 §컨텍스트 빌더 + ADR-020 §능동 코치 컨텍스트 강화).
-- 빈 DB 상태 빈 상태 UI + 1주일 strip 뷰 fallback.
-- 끝나면 `CLAUDE.md` §9 보고 + 캘린더 화면 동작 + 능동 코치가 캘린더 패턴 언급 (수동 검증 5회 중 3회 이상).
-- 모호하면 멈추고 사용자에게 물어라.
+- 먼저 `CLAUDE.md` 와 phase 명세의 "관련 ADR"에 적힌 ADR(027, 021, 030, 022)만 읽어라. 그 외 ADR은 읽지 마라 (컨텍스트 절약).
+- v4 우선: 트레이 상주 경량 스케줄러(모델 없음) + native toast(운동시간/체크인) + 클릭→앱 포커스→세션 시작(모델 로드는 phase 7 시점). 음소거 시간대 존중.
+- 상시 가동/선제 발화 아님(ADR-021 세션 모델 유지). 스케줄 소스 = 플랜(phase 4)/캘린더(phase 9), 미연동 시 로컬 fallback.
+- 의존: phase 6(트레이) + phase 4(스케줄 소스). `CLAUDE.md` §4 폴더 구조 고정, §6 외부 호출 정책, §8 의존성 추가 시 사용자 확인 필수.
+- 끝나면 `CLAUDE.md` §9 보고 형식 + `docs/conventions/code-review-checklist.md` 자가 점검 결과 포함.
+- ADR/PRD와 충돌하거나 모호하면 멈추고 사용자에게 물어라.
