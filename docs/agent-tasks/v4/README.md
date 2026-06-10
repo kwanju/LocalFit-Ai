@@ -27,9 +27,9 @@ v4 구현 phase 인덱스. v3(master 동결)을 base 로, ADR-021~031 을 구현
 | 3 | [컨디션 트래킹](phase-3-condition-tracking.md) | 자가보고 체크인(피로/근육통, 로컬-only) 저장 + 코치가 컨디션 읽어 **강도 조절 제안(확인)** | 023 | 2 |
 | 4 | [운동 플랜](phase-4-workout-plan.md) | **주간 목표 + 일자 분배**, 컨디션 결합 자동 제안은 **ConfirmRule 동의**(LLM 임의조정 금지) | 024 | 2, 3 |
 | 5 | [첫 세션 대화형 체력검증](phase-5-first-session-assessment.md) | 단발 `propose_set` → **대화형 plan-building tool-use**, 온보딩 폼 시드 보정 → 메모리 기준선 저장 | 028 | 2, 4 |
-| 6 | Tauri 셸 통합 (런타임 교체) | 탐사 산출물 제품화: `ui/` Tauri 웹뷰 탑재 + FastAPI **사이드카 lifecycle**(spawn/tree-kill) + 사이드카 사망 감지 UI. **후속 fix: S-4 마이크 입력(webview2 권한)** | 031 | 1 |
-| 7 | 모델 lifecycle on-demand | 세션 시작 GPU 로드 / 종료 언로드(Ollama `keep_alive=0` + `empty_cache()`), **병렬 로드 + 앱-열림 prewarm + "코치 준비 중" UX** 로 콜드스타트(~30s) 단축, VRAM 반환 검증 | 030 | 6 |
-| 8 | 능동 알림 + 백그라운드 스케줄러 | 트레이 상주 경량 스케줄러 + native toast(운동시간/체크인) + **클릭→앱 포커스→세션 시작**(S-6 후속 마무리), 음소거 시간대 | 027 | 6, 4 |
+| 6 | [Tauri 셸 통합 (런타임 교체)](phase-6-tauri-shell.md) | 탐사 산출물 제품화: `ui/` Tauri 웹뷰 탑재 + FastAPI **사이드카 lifecycle**(spawn/tree-kill) + 사이드카 사망 감지 UI. **후속 fix: S-4 마이크 입력(webview2 권한)** | 031 | 1 |
+| 7 | [모델 lifecycle on-demand](phase-7-model-lifecycle.md) | 세션 시작 GPU 로드 / 종료 언로드(Ollama `keep_alive=0` + `empty_cache()`), **병렬 로드 + 앱-열림 prewarm + "코치 준비 중" UX** 로 콜드스타트(~30s) 단축, VRAM 반환 검증 | 030 | 6 |
+| 8 | [능동 알림 + 백그라운드 스케줄러](phase-8-active-notifications.md) | 트레이 상주 경량 스케줄러 + native toast(운동시간/체크인) + **클릭→앱 포커스→세션 시작**(S-6 후속 마무리), 음소거 시간대 | 027 | 6, 4 |
 | 9 | Google Calendar 연동 | OAuth2 Desktop client, 운동 일정 등록 + 타 일정 읽어 틈새 추천. **로컬-only(ADR-002)를 캘린더에 한해 완화** | 022 | 4, 8 |
 
 > **ADR-026(종목 확장)** 은 Deferred — v4 는 v3 4종(풀업/푸시업/스쿼트/플랭크) 고정 유지, phase 없음.
