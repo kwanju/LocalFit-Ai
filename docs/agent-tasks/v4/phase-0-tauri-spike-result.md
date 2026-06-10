@@ -143,3 +143,17 @@
 - `ui/package.json` — `@tauri-apps/cli|api` devDep.
 - `scripts/spike_vram_lifecycle.py` — S-8 측정.
 - 환경: Rust 1.59→1.96 (rustup stable).
+
+## 5. 다음 세션 런북 (집에서 — 마이크 필요)
+
+> 목표: **S-4 마이크 입력 + S-5 종료-정리(수정본)** 검증 → 통과 시 **완전 GO**.
+> 준비 상태: S-5 tree-kill 수정은 이미 컴파일됨(`cargo build` exit 0). **재빌드 불필요**.
+
+1. `cd ui && pnpm tauri dev` — 창 뜨고 백엔드 사이드카 자동 기동. `/health` ok 까지 **~30s 콜드스타트**(정상, 모델 로드).
+2. **S-4 마이크(★ 최대 위험)**: S2S 음성 모드 전환 → 마이크 권한 프롬프트 → 허용 → 발화 → STT 인식 + 코치 음성 응답 확인.
+   - 안 행복한 경로: 권한 **거부** 시 UI 안내가 뜨는지.
+3. **S-5 종료-정리**: 트레이 우클릭 → "종료" → 작업관리자에서 **python/uv 완전 소멸** 확인(이전 고아 버그 재발 X).
+4. **F3 겸사 — 9b 코칭 회귀**: C2C 채팅으로 운동 제안 받아 `propose_set`·확답 흐름이 qwen3.5:9b 에서도 정상인지(ADR-013 회귀).
+
+- **통과 시** → ADR-031/027/030 Accepted 승격 + 010/015 Superseded + CLAUDE.md §3 수정 → v4 구현 phase 인덱스.
+- **S-4 실패 시** → no-go 경로: PWA 후퇴 + ADR-010 유지(§3 참조).
