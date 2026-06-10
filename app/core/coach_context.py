@@ -22,19 +22,24 @@ class _ProfileRepo(Protocol):
 
 
 class _SessionRepo(Protocol):
-    async def get_recent(self, limit: int = 10): ...
+    async def get_recent(self, limit: int = 10) -> list: ...
 
 
 class _SetLogRepo(Protocol):
-    async def get_by_session(self, session_id: int): ...
+    async def get_by_session(self, session_id: int) -> list: ...
 
 
 class _ConditionRepo(Protocol):
-    async def get_by_session(self, session_id: int): ...
+    async def get_by_session(self, session_id: int) -> list: ...
 
 
 class _RoutineRepo(Protocol):
-    async def list_all(self): ...
+    async def list_all(self) -> list: ...
+
+
+class _MemoryRepo(Protocol):
+    async def get_constraints(self) -> list: ...
+    async def recent_facts(self, limit: int = 10) -> list: ...
 
 
 def _time_of_day(now: datetime) -> str:
@@ -88,6 +93,9 @@ class CalendarSignals:
     rest_streak_days: int = 0
 
 
+_MAX_RECENT_FACTS: int = 5
+
+
 @dataclass
 class CoachContextBuilder:
     profile_repo: _ProfileRepo
@@ -96,6 +104,7 @@ class CoachContextBuilder:
     condition_repo: _ConditionRepo
     routine_repo: _RoutineRepo
     calendar_signals_fn: object | None = None   # async () -> CalendarSignals; phase-8 wires it
+    memory_repo: _MemoryRepo | None = None      # ADR-025; phase-2 wires it
 
     async def build(self, *, recent_sessions: int = 5, now: datetime | None = None) -> str:
         now = now or datetime.now()
@@ -131,6 +140,9 @@ class CoachContextBuilder:
 
         signals = await self._calendar_signals()
 
+        # 1층 부상/제약 — 안전 직결. cap 면제로 항상 전량 주입(ADR-025).
+        safety_block = await self._safety_block()
+
         parts: list[str] = [
             _profile_summary(profile),
             _routine_summary(routines),
@@ -146,11 +158,47 @@ class CoachContextBuilder:
         if signals.rest_streak_days >= 2:
             parts.append(f"휴식 streak {signals.rest_streak_days}일")
         parts.append(f"현재 {_time_of_day(now)} {now.hour}시")
+        # 2층 자유텍스트 메모 — 마지막에 배치해 cap 초과 시 가장 먼저 잘리게 한다.
+        memo = await self._recent_memo()
+        if memo:
+            parts.append(memo)
 
-        context = " / ".join(parts)
-        if len(context) > _MAX_CONTEXT_CHARS:
-            context = context[: _MAX_CONTEXT_CHARS - 1] + "…"
-        return context
+        # cap 은 비-안전 본문(rest)에만 적용. 부상/제약은 예산 밖(전량 보장).
+        rest = " / ".join(parts)
+        if len(rest) > _MAX_CONTEXT_CHARS:
+            rest = rest[: _MAX_CONTEXT_CHARS - 1] + "…"
+
+        if safety_block:
+            return f"{safety_block} / {rest}"
+        return rest
+
+    async def _safety_block(self) -> str | None:
+        """활성 부상/제약 전량을 한 줄로. **절대 잘리지 않는다**(안전 직결)."""
+        if self.memory_repo is None:
+            return None
+        try:
+            constraints = await self.memory_repo.get_constraints()
+        except Exception:  # noqa: BLE001 — never break the prompt
+            return None
+        if not constraints:
+            return None
+        items = "; ".join(
+            f"{'부상' if getattr(c, 'kind', None) == 'injury' else '제약'}:{c.text}"
+            for c in constraints
+        )
+        return f"⚠️필수 제약(전량): {items}"
+
+    async def _recent_memo(self) -> str | None:
+        """2층 자유텍스트 최근 N건. 비거나 검색 실패해도 안전에는 영향 없음."""
+        if self.memory_repo is None:
+            return None
+        try:
+            facts = await self.memory_repo.recent_facts(limit=_MAX_RECENT_FACTS)
+        except Exception:  # noqa: BLE001 — best-effort
+            return None
+        if not facts:
+            return None
+        return "메모: " + " / ".join(f.text for f in facts)
 
     async def _calendar_signals(self) -> CalendarSignals:
         # Phase-8 wires app.core.calendar_metrics here. Until then return zeros

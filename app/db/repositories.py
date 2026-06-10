@@ -10,12 +10,16 @@ from app.db.models import (
     DEFAULT_REST_SEC,
     ConditionLog,
     Exercise,
+    FitnessBaseline,
     FitnessLevel,
     InteractionLog,
+    MemoryFact,
+    MemoryKind,
     Routine,
     RoutineExercise,
     SessionStatus,
     SetLog,
+    UserMemory,
     UserProfile,
     WorkoutSession,
 )
@@ -241,6 +245,123 @@ class UserProfileRepository:
         await self._session.commit()
         await self._session.refresh(profile)
         return profile
+
+
+class MemoryRepository:
+    """영속 메모리 저장소 (ADR-025). 1층=부상·제약(전량 주입), 2층=자유텍스트.
+
+    단일 사용자(ADR-002)라 ``user_id`` 분기 없음.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    # --- 1층: 부상·제약 (안전, 전량 조회) ---------------------------------
+
+    async def get_constraints(self) -> list[UserMemory]:
+        """활성 부상·제약 전량(오래된 순). 컨텍스트 빌더가 cap 면제로 전량 주입한다."""
+        result = await self._session.exec(
+            select(UserMemory)
+            .where(UserMemory.active == True)  # noqa: E712 — SQLAlchemy 표현식
+            .order_by(UserMemory.created_at)
+        )
+        return list(result.all())
+
+    async def add_constraint(
+        self,
+        kind: MemoryKind | str,
+        text: str,
+        severity: str | None = None,
+    ) -> UserMemory:
+        """부상·제약 추가. 동일 ``kind``+``text`` 활성 항목이 있으면 중복 저장하지
+        않고 기존 항목을 돌려준다(같은 발화 반복 시 스팸 방지 — 멱등)."""
+        kind = MemoryKind(kind)
+        norm = text.strip()
+        existing = await self._session.exec(
+            select(UserMemory)
+            .where(UserMemory.active == True)  # noqa: E712
+            .where(UserMemory.kind == kind)
+            .where(UserMemory.text == norm)
+        )
+        found = existing.first()
+        if found is not None:
+            return found
+        mem = UserMemory(kind=kind, text=norm, severity=severity)
+        self._session.add(mem)
+        await self._session.commit()
+        await self._session.refresh(mem)
+        return mem
+
+    async def deactivate_constraint(self, memory_id: int) -> bool:
+        """제약 해소(이력 보존 — 삭제 아님)."""
+        mem = await self._session.get(UserMemory, memory_id)
+        if mem is None:
+            return False
+        mem.active = False
+        self._session.add(mem)
+        await self._session.commit()
+        return True
+
+    # --- 1층: 기준선 (phase v4-5 가 채움, 여기선 upsert 만 제공) -----------
+
+    async def set_baseline(
+        self,
+        exercise: str,
+        metric: str,
+        value: int,
+        note: str | None = None,
+    ) -> FitnessBaseline:
+        """종목·지표별 기준선 upsert."""
+        result = await self._session.exec(
+            select(FitnessBaseline)
+            .where(FitnessBaseline.exercise == exercise)
+            .where(FitnessBaseline.metric == metric)
+        )
+        row = result.first()
+        if row is None:
+            row = FitnessBaseline(exercise=exercise, metric=metric, value=value, note=note)
+        else:
+            row.value = value
+            row.note = note
+            row.updated_at = datetime.now(UTC)
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return row
+
+    async def get_baseline(self) -> list[FitnessBaseline]:
+        result = await self._session.exec(select(FitnessBaseline))
+        return list(result.all())
+
+    # --- 2층: 자유텍스트 메모 (최근순 / 키워드, 벡터 X) -------------------
+
+    async def add_fact(self, text: str, tags: list[str] | None = None) -> MemoryFact:
+        fact = MemoryFact(
+            text=text.strip(),
+            tags=json.dumps(tags or [], ensure_ascii=False),
+        )
+        self._session.add(fact)
+        await self._session.commit()
+        await self._session.refresh(fact)
+        return fact
+
+    async def recent_facts(self, limit: int = 10) -> list[MemoryFact]:
+        result = await self._session.exec(
+            select(MemoryFact).order_by(MemoryFact.created_at.desc()).limit(limit)
+        )
+        return list(result.all())
+
+    async def search_facts(self, keyword: str, limit: int = 10) -> list[MemoryFact]:
+        kw = keyword.strip()
+        if not kw:
+            return []
+        result = await self._session.exec(
+            select(MemoryFact)
+            .where(MemoryFact.text.contains(kw))  # type: ignore[union-attr]
+            .order_by(MemoryFact.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.all())
 
 
 class RoutineRepository:

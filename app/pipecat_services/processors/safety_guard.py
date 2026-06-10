@@ -15,6 +15,7 @@ Domain logic (keyword patterns + level classification) lives in
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 from pipecat.frames.frames import (
@@ -26,7 +27,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from app.core.safety import SafetyGuard
+from app.core.coach_response import RecordConstraintAction
+from app.core.safety import DangerLevel, SafetyGuard
+from app.messages import MSG_CONSTRAINT_REMEMBERED
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.frames import SafetyResponseFrame
 
@@ -34,6 +37,14 @@ _PAUSE_KEYWORDS: frozenset[str] = frozenset(
     {"그만", "잠깐", "멈춰", "멈추", "스톱", "중단"}
 )
 _TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
+
+# 부위 통증·부상만 1층 제약으로 승격. EMERGENCY(급성)·LOW(일시 피로)는 제외 —
+# 영구 제약이 아니다 (ADR-025 안전 키워드 규칙 승격).
+_PERSIST_LEVELS: frozenset[DangerLevel] = frozenset(
+    {DangerLevel.MODERATE, DangerLevel.HIGH}
+)
+
+RecordConstraintFn = Callable[[RecordConstraintAction], Awaitable[None]]
 
 
 def _has_pause_keyword(text: str) -> bool:
@@ -61,10 +72,12 @@ class SafetyGuardProcessor(FrameProcessor):
         self,
         guard: SafetyGuard | None = None,
         counting_manager: CountingManager | None = None,
+        record_constraint: RecordConstraintFn | None = None,
     ) -> None:
         super().__init__()
         self._guard = guard or SafetyGuard()
         self._counting_manager = counting_manager
+        self._record_constraint = record_constraint
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -93,12 +106,30 @@ class SafetyGuardProcessor(FrameProcessor):
                             await self._counting_manager.stop()
                         except Exception as e:  # noqa: BLE001
                             logger.error("SafetyGuardProcessor: counting stop failed: {}", e)
+                    # 부위 통증·부상은 1층 제약으로 즉시 승격 + 통지 (ADR-025).
+                    # LLM 우회 경로라 여기가 키워드 매칭 부상의 유일한 저장 지점.
+                    response_text = result.response
+                    if await self._maybe_record(text, result.level):
+                        response_text = f"{response_text} {MSG_CONSTRAINT_REMEMBERED}"
                     await self.push_frame(LLMFullResponseStartFrame(), direction)
                     await self.push_frame(
-                        SafetyResponseFrame(text=result.response, level=result.level),
+                        SafetyResponseFrame(text=response_text, level=result.level),
                         direction,
                     )
                     await self.push_frame(LLMFullResponseEndFrame(), direction)
                     return
 
         await self.push_frame(frame, direction)
+
+    async def _maybe_record(self, text: str, level: DangerLevel | None) -> bool:
+        """부위 통증·부상(MODERATE/HIGH)이면 1층 제약으로 즉시 저장. 저장하면 True."""
+        if self._record_constraint is None or level not in _PERSIST_LEVELS:
+            return False
+        try:
+            await self._record_constraint(
+                RecordConstraintAction(kind="injury", text=text.strip())
+            )
+            return True
+        except Exception as e:  # noqa: BLE001 — never break the safety response
+            logger.error("SafetyGuardProcessor: record_constraint failed: {}", e)
+            return False

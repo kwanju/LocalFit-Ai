@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from pipecat.frames.frames import Frame, TextFrame, TranscriptionFrame
 from pipecat.tests.utils import run_test
 from pipecat.utils.time import time_now_iso8601
 
+from app.messages import MSG_CONSTRAINT_REMEMBERED
 from app.pipecat_services.frames import SafetyResponseFrame
 from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
 
@@ -55,6 +58,46 @@ async def test_empty_text_passthrough() -> None:
         frames_to_send=[TranscriptionFrame(text="", user_id="u", timestamp="x")],
     )
     assert any(isinstance(f, TranscriptionFrame) for f in down)
+
+
+async def _send_with_recorder(text: str, cb: AsyncMock) -> list[Frame]:
+    down, _ = await run_test(
+        SafetyGuardProcessor(record_constraint=cb),
+        frames_to_send=[
+            TranscriptionFrame(text=text, user_id="u", timestamp=time_now_iso8601())
+        ],
+    )
+    return list(down)
+
+
+async def test_body_pain_promoted_to_constraint() -> None:
+    """ADR-025 — 부위 통증(MODERATE)은 1층 제약으로 즉시 저장 + 응답에 통지."""
+    cb = AsyncMock()
+    frames = await _send_with_recorder("왼쪽 어깨가 아파요", cb)
+    cb.assert_awaited_once()
+    action = cb.call_args.args[0]
+    assert action.kind == "injury"
+    assert action.text == "왼쪽 어깨가 아파요"
+    safety = [f for f in frames if isinstance(f, SafetyResponseFrame)]
+    assert len(safety) == 1
+    assert MSG_CONSTRAINT_REMEMBERED in safety[0].text
+
+
+async def test_emergency_not_promoted() -> None:
+    """급성 응급(EMERGENCY)은 영구 제약이 아니므로 저장하지 않는다."""
+    cb = AsyncMock()
+    frames = await _send_with_recorder("숨이 안 쉬어져요", cb)
+    cb.assert_not_awaited()
+    safety = [f for f in frames if isinstance(f, SafetyResponseFrame)]
+    assert len(safety) == 1
+    assert MSG_CONSTRAINT_REMEMBERED not in safety[0].text
+
+
+async def test_transient_fatigue_not_promoted() -> None:
+    """일시적 피로(LOW)도 영구 제약 아님."""
+    cb = AsyncMock()
+    await _send_with_recorder("너무 피곤해요", cb)
+    cb.assert_not_awaited()
 
 
 async def test_non_user_text_passthrough() -> None:

@@ -6,6 +6,8 @@ MSG_DISCLAIMER: str = (
     "LocalFit AI는 의료 기기나 의료 전문가를 대체하지 않습니다. "
     "심각한 통증이나 부상에는 반드시 전문의 상담을 받으세요."
 )
+# 1층 부상/제약 자동 저장 통지 (ADR-025). 안전 키워드 감지 시 응답 끝에 붙인다.
+MSG_CONSTRAINT_REMEMBERED: str = "이 부위는 제약으로 기억해 둘게요."
 MSG_LLM_TIMEOUT: str = "잠시 후 답해드릴게요."
 MSG_COACHING_UNAVAILABLE: str = "코치 연결에 문제가 생겼어요. 잠시 후 다시 시도해 주세요."
 MSG_SESSION_PAUSED: str = "세션을 잠시 멈췄습니다."

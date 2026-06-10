@@ -25,6 +25,7 @@ from app.db.engine import create_db_session
 from app.db.repositories import (
     ConditionRepository,
     ExerciseRepository,
+    MemoryRepository,
     RoutineRepository,
     SessionRepository,
     SetLogRepository,
@@ -54,6 +55,7 @@ class DBCoachContextAdapter:
                 condition_repo=ConditionRepository(db),
                 routine_repo=RoutineRepository(db),
                 calendar_signals_fn=_get_signals,
+                memory_repo=MemoryRepository(db),
             )
             return await builder.build(recent_sessions=recent_sessions, now=now)
 

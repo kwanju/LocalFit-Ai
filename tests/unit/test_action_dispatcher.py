@@ -10,6 +10,8 @@ from pipecat.tests.utils import run_test
 from app.core.coach_response import (
     LogConditionAction,
     ProposeSetAction,
+    RecordConstraintAction,
+    RememberFactAction,
     StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
@@ -48,6 +50,27 @@ async def test_log_condition_invokes_callback() -> None:
     cb = AsyncMock()
     disp = ActionDispatcherProcessor(slot, log_condition=cb)
     action = LogConditionAction(fatigue_level=8, notes="다리 무거움")
+    await _drive(disp, [CoachActionFrame(action=action)])
+    cb.assert_awaited_once()
+    assert cb.call_args.args[0] == action
+
+
+async def test_record_constraint_invokes_callback() -> None:
+    """ADR-025 — record_constraint 는 확답 없이 즉시 콜백 호출(안전 직결)."""
+    slot = ConfirmSlot()
+    cb = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, record_constraint=cb)
+    action = RecordConstraintAction(kind="injury", text="왼쪽 어깨 통증")
+    await _drive(disp, [CoachActionFrame(action=action)])
+    cb.assert_awaited_once()
+    assert cb.call_args.args[0] == action
+
+
+async def test_remember_fact_invokes_callback() -> None:
+    slot = ConfirmSlot()
+    cb = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, remember_fact=cb)
+    action = RememberFactAction(text="아침 운동을 선호함", tags=["선호"])
     await _drive(disp, [CoachActionFrame(action=action)])
     cb.assert_awaited_once()
     assert cb.call_args.args[0] == action

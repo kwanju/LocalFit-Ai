@@ -22,6 +22,8 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from app.core.coach_response import (
     LogConditionAction,
     ProposeSetAction,
+    RecordConstraintAction,
+    RememberFactAction,
     StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
@@ -30,6 +32,8 @@ from app.pipecat_services.frames import CoachActionFrame
 
 StartCountingFn = Callable[[StartCountingAction], Awaitable[None]]
 LogConditionFn = Callable[[LogConditionAction], Awaitable[None]]
+RecordConstraintFn = Callable[[RecordConstraintAction], Awaitable[None]]
+RememberFactFn = Callable[[RememberFactAction], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
@@ -43,12 +47,16 @@ class ActionDispatcherProcessor(FrameProcessor):
         *,
         start_counting: StartCountingFn | None = None,
         log_condition: LogConditionFn | None = None,
+        record_constraint: RecordConstraintFn | None = None,
+        remember_fact: RememberFactFn | None = None,
         counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
         self._slot = slot
         self._start_counting = start_counting
         self._log_condition = log_condition
+        self._record_constraint = record_constraint
+        self._remember_fact = remember_fact
         self._counting_manager = counting_manager
         # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
         # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
@@ -138,6 +146,28 @@ class ActionDispatcherProcessor(FrameProcessor):
                     await self._log_condition(action)
                 except Exception as e:  # noqa: BLE001
                     logger.error("log_condition dispatch failed: {}", e)
+            return
+
+        if isinstance(action, RecordConstraintAction):
+            # 안전 직결 — 확답 없이 즉시 저장 (ADR-025, 2026-06-10 사용자 결정).
+            logger.info(
+                "dispatch record_constraint: kind={} text={} severity={}",
+                action.kind, action.text, action.severity,
+            )
+            if self._record_constraint is not None:
+                try:
+                    await self._record_constraint(action)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("record_constraint dispatch failed: {}", e)
+            return
+
+        if isinstance(action, RememberFactAction):
+            logger.info("dispatch remember_fact: text={} tags={}", action.text, action.tags)
+            if self._remember_fact is not None:
+                try:
+                    await self._remember_fact(action)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("remember_fact dispatch failed: {}", e)
             return
 
         logger.warning("dispatch: unknown action type {}", type(action).__name__)

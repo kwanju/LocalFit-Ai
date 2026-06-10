@@ -35,7 +35,12 @@ from app.core.counting_cues import set_ordinal
 from app.db.engine import create_db_session
 from app.db.models import SessionMode as DBSessionMode
 from app.db.models import SessionStatus
-from app.db.repositories import ExerciseRepository, SessionRepository, SetLogRepository
+from app.db.repositories import (
+    ExerciseRepository,
+    MemoryRepository,
+    SessionRepository,
+    SetLogRepository,
+)
 from app.pipecat_services.coach_context_adapter import DBCoachContextAdapter
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.json_frame_serializer import JsonFrameSerializer
@@ -130,8 +135,30 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     if counting_manager is not None:
         counting_manager.attach_inject_processor(counting_inject)
 
-    safety = SafetyGuardProcessor(counting_manager=counting_manager)
-    dispatcher = ActionDispatcherProcessor(slot, counting_manager=counting_manager)
+    # ADR-025 영속 메모리 쓰기 경로 — 액션/안전키워드가 즉시 DB 에 저장(확답 X).
+    # SetLog 와 동일하게 콜백마다 새 DB 세션을 연다.
+    async def _record_constraint(action) -> None:
+        async with create_db_session() as db:
+            await MemoryRepository(db).add_constraint(
+                action.kind, action.text, severity=action.severity
+            )
+        logger.info("memory: constraint saved kind={} text={}", action.kind, action.text)
+
+    async def _remember_fact(action) -> None:
+        async with create_db_session() as db:
+            await MemoryRepository(db).add_fact(action.text, tags=action.tags)
+        logger.info("memory: fact saved text={}", action.text)
+
+    safety = SafetyGuardProcessor(
+        counting_manager=counting_manager,
+        record_constraint=_record_constraint,
+    )
+    dispatcher = ActionDispatcherProcessor(
+        slot,
+        counting_manager=counting_manager,
+        record_constraint=_record_constraint,
+        remember_fact=_remember_fact,
+    )
     confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 
     # Phase-7: UIControlProcessor handles control messages from the browser.

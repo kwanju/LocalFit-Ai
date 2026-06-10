@@ -131,3 +131,74 @@ class TestBuild:
         )
         ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
         assert len(ctx) <= 700
+
+
+def _constraint(kind: str, text: str):
+    return SimpleNamespace(kind=kind, text=text)
+
+
+class TestMemoryInjection:
+    """ADR-025 — 부상/제약은 cap 면제 전량 주입, 2층 메모는 cap 적용."""
+
+    async def test_constraints_injected_in_full(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(
+                return_value=[
+                    _constraint("injury", "왼쪽 어깨 회전근개 통증"),
+                    _constraint("constraint", "윗몸일으키기 금지"),
+                ]
+            ),
+            recent_facts=AsyncMock(return_value=[]),
+        )
+        b = CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+            memory_repo=mem,
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
+        assert "부상:왼쪽 어깨 회전근개 통증" in ctx
+        assert "제약:윗몸일으키기 금지" in ctx
+
+    async def test_constraints_survive_even_when_rest_overflows(self) -> None:
+        """본문(rest)이 cap 을 한참 넘겨도 부상/제약은 절대 잘리지 않는다."""
+        # _routine_summary 는 routines[:3] 만 쓰므로 3개를 각각 길게 만들어 cap 초과 유도.
+        long_routines = [_routine("아주 긴 루틴 " + str(i) * 300) for i in range(3)]
+        mem = AsyncMock(
+            get_constraints=AsyncMock(
+                return_value=[_constraint("injury", "오른쪽 무릎 십자인대 부상")]
+            ),
+            recent_facts=AsyncMock(return_value=[]),
+        )
+        b = CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=_profile())),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=long_routines)),
+            memory_repo=mem,
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
+        # 본문은 잘렸지만(말줄임표 존재) 안전 블록은 전량 보존.
+        assert "…" in ctx
+        assert "부상:오른쪽 무릎 십자인대 부상" in ctx
+
+    async def test_recent_memo_injected(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(
+                return_value=[_constraint("", "아침 운동을 선호함")]  # .text 만 사용
+            ),
+        )
+        b = CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+            memory_repo=mem,
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
+        assert "메모: 아침 운동을 선호함" in ctx

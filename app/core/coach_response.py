@@ -35,8 +35,29 @@ class LogConditionAction(BaseModel):
     notes: str | None = None
 
 
+class RecordConstraintAction(BaseModel):
+    """1층 부상·제약 저장 (ADR-025). 안전 직결이라 확답 없이 즉시 저장된다."""
+
+    type: Literal["record_constraint"] = "record_constraint"
+    kind: Literal["injury", "constraint"]
+    text: str = Field(min_length=1, max_length=200)
+    severity: str | None = None
+
+
+class RememberFactAction(BaseModel):
+    """2층 자유텍스트 메모 누적 (ADR-025). 부드러운 선호·맥락."""
+
+    type: Literal["remember_fact"] = "remember_fact"
+    text: str = Field(min_length=1, max_length=200)
+    tags: list[str] = Field(default_factory=list)
+
+
 CoachAction = Annotated[
-    ProposeSetAction | StartCountingAction | LogConditionAction,
+    ProposeSetAction
+    | StartCountingAction
+    | LogConditionAction
+    | RecordConstraintAction
+    | RememberFactAction,
     Field(discriminator="type"),
 ]
 

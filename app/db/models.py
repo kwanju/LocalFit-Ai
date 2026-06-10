@@ -33,6 +33,12 @@ class SessionStatus(StrEnum):
     cancelled = "cancelled"
 
 
+class MemoryKind(StrEnum):
+    # 1층 구조화 메모리 종류 (ADR-025). injury=부상, constraint=금기·제약.
+    injury = "injury"
+    constraint = "constraint"
+
+
 class UserProfile(SQLModel, table=True):
     __tablename__ = "user_profile"
 
@@ -120,6 +126,52 @@ class ConditionLog(SQLModel, table=True):
     fatigue_level: int | None = None  # 1–10
     pain_report: str | None = None
     notes: str | None = None
+
+
+class UserMemory(SQLModel, table=True):
+    """1층 구조화 메모리 — 부상·제약 (ADR-025). 안전 직결이라 매 세션 전량 주입된다.
+
+    단일 사용자(ADR-002)라 ``user_id`` 분기 없음. ``active=False`` 는 해소된 제약
+    (이력 보존). ``severity`` 는 LLM/규칙이 채울 수 있는 선택 메타.
+    """
+
+    __tablename__ = "user_memory"
+
+    id: int | None = Field(default=None, primary_key=True)
+    kind: MemoryKind
+    text: str
+    severity: str | None = None
+    active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FitnessBaseline(SQLModel, table=True):
+    """1층 기준선 — 첫 체력검증(ADR-028) 결과. **스키마만 phase v4-2 가 마련하고
+    실제 채움은 phase v4-5 가 담당**. 종목·지표별 한 행(upsert).
+
+    metric: "reps"(횟수 종목) | "duration_sec"(플랭크 등 시간 종목).
+    """
+
+    __tablename__ = "fitness_baseline"
+
+    id: int | None = Field(default=None, primary_key=True)
+    exercise: str
+    metric: str
+    value: int
+    note: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class MemoryFact(SQLModel, table=True):
+    """2층 자유텍스트 메모 — 부드러운 선호·맥락 (ADR-025). 검색은 최근순/키워드
+    (벡터 X). 토큰 예산 내 최근 N건만 주입되며, 잘려도 안전에는 영향 없음."""
+
+    __tablename__ = "memory_fact"
+
+    id: int | None = Field(default=None, primary_key=True)
+    text: str
+    tags: str = Field(default="[]")  # JSON array
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class InteractionLog(SQLModel, table=True):
