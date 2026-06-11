@@ -29,11 +29,10 @@ from app.pipecat_services.processors.safety_guard import SafetyGuardProcessor
 from app.prompts.coaching import PROACTIVE_OPENER_USER_MESSAGE
 
 
-def _instr(response: CoachResponse) -> SimpleNamespace:
+def _client_mock(response: CoachResponse) -> SimpleNamespace:
+    """Ollama native client mock — ``chat`` returns ``{"message":{"content": JSON}}``."""
     return SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(create=AsyncMock(return_value=response))
-        )
+        chat=AsyncMock(return_value={"message": {"content": response.model_dump_json()}})
     )
 
 
@@ -65,7 +64,7 @@ async def test_llm_direct_start_counting_converts_to_proposal() -> None:
     cb = AsyncMock()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    llm._instructor = _instr(
+    llm._client = _client_mock(
         CoachResponse(
             text="푸시업 10개 시작할게요!",
             actions=[StartCountingAction(exercise="푸시업", reps=10)],
@@ -88,10 +87,9 @@ async def test_safety_keyword_bypasses_llm() -> None:
     config = load_config()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    create = AsyncMock(return_value=CoachResponse(text="LLM should not be called"))
-    llm._instructor = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    _no_call = CoachResponse(text="LLM should not be called").model_dump_json()
+    chat = AsyncMock(return_value={"message": {"content": _no_call}})
+    llm._client = SimpleNamespace(chat=chat)
 
     pipeline = _build_coach_pipeline(llm, slot)
     from pipecat.frames.frames import TranscriptionFrame
@@ -106,7 +104,7 @@ async def test_safety_keyword_bypasses_llm() -> None:
         ],
     )
 
-    create.assert_not_called()
+    chat.assert_not_called()
     assert any(isinstance(f, SafetyResponseFrame) for f in down)
 
 
@@ -125,20 +123,22 @@ async def test_proactive_opener_message_triggers_llm() -> None:
     config = load_config()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    create = AsyncMock(
-        return_value=CoachResponse(
-            text="안녕하세요! 가볍게 스쿼트 15회 어떠세요?",
-            actions=[ProposeSetAction(exercise="스쿼트", reps=15, sets=3, rest_sec=60)],
-        )
+    chat = AsyncMock(
+        return_value={
+            "message": {
+                "content": CoachResponse(
+                    text="안녕하세요! 가볍게 스쿼트 15회 어떠세요?",
+                    actions=[ProposeSetAction(exercise="스쿼트", reps=15, sets=3, rest_sec=60)],
+                ).model_dump_json()
+            }
+        }
     )
-    llm._instructor = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    llm._client = SimpleNamespace(chat=chat)
 
     pipeline = _build_coach_pipeline(llm, slot)
     await run_test(pipeline, frames_to_send=[InputTextRawFrame(text=PROACTIVE_OPENER_USER_MESSAGE)])
 
-    create.assert_awaited_once()
+    chat.assert_awaited_once()
     # the proposal landed in the slot
     assert slot.has_pending
     assert slot.pending_proposal.exercise == "스쿼트"

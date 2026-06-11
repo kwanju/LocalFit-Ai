@@ -8,9 +8,16 @@ DEFAULT_USER_ID: int = 1
 
 class LLMConfig(BaseModel):
     host: str
-    model: str          # 단일 모델 (ADR-004: qwen3:8b)
+    model: str          # 단일 모델 (ADR-029: qwen3.5:9b)
     timeout_sec: float
     keep_alive: str
+    # qwen3.5:9b 는 thinking 모델 — structured 출력에선 reasoning 이 컨텍스트를 다
+    # 채워 JSON 을 못 내므로 끈다(think=False). num_ctx/num_predict 는 Ollama native
+    # /api/chat 옵션이며 /v1(OpenAI-compat)은 이를 무시한다. ADR-029 §thinking 참조.
+    num_ctx: int = 8192
+    num_predict: int = 512
+    temperature: float = 0.7
+    think: bool = False
 
 
 class STTConfig(BaseModel):

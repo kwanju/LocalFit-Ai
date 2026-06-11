@@ -48,6 +48,23 @@ v4 는 tool-use(캘린더·DB·플랜을 LLM 도구로 호출, ADR-022/024/025)�
 | qwen3.6:35b-a3b MoE 기본 | ~21GB 로 16GB 베이스라인 동시 상주 불가 — config 상향 옵션으로만 |
 | qwen3.5:27b dense | 지연·VRAM 과대 — 베이스라인·latency 위험 |
 
+## 구현 노트 — thinking off 실현 (2026-06-12)
+
+ADR-029 의 `think: false`(line 25) 가 **instructor(OpenAI-compat `/v1`) 경로로는 실현
+불가능**함이 phase v4-3 검증 중 드러났다. Ollama `/v1` 은 `think`·`num_ctx` 확장
+파라미터를 무시해, qwen3.5:9b 의 thinking 이 컨텍스트(num_ctx 4096)를 다 채우고 JSON
+content 가 빈 문자열로 잘린다(`finish_reason=length`, 능동 인사가 매번 실패).
+
+→ LLM 호출을 **Ollama native `ollama.AsyncClient.chat`** 로 전환(line 26 instructor 정정):
+`think=False` + `format=CoachResponse` JSON schema + `options.num_ctx/num_predict` 를
+직접 전달한다. instructor 의 자동 JSON 검증/재시도는 Pydantic `model_validate_json` +
+재시도 루프 + 후처리 보정(JSON 추출, 영어 운동명→한국어 alias, severity 정수→문자열)
+으로 대체. **모델 결정(qwen3.5:9b)·think:false 의도는 불변**, 구현 수단만 instructor→native.
+
+실측(2026-06-12): think on/`/v1` → content 빈 문자열(실패) / think off + native → 52~200
+토큰 JSON, 첫 응답 1~2초. 컨디션 발화("피곤·뻐근") → `log_condition`(soreness 포함) +
+강도 낮춘 `propose_set` 제안까지 정상 동작 확인. 관련 config: `llm.{think,num_ctx,num_predict,temperature}`.
+
 ## References
 - [Qwen3.5 — Ollama / LM Studio](https://lmstudio.ai/models/qwen3.5)
 - [Qwen3.6 35B-A3B VRAM guide](https://willitrunai.com/blog/qwen-3-6-vram-requirements)

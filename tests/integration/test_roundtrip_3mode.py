@@ -52,10 +52,9 @@ _SILENCE_100MS = bytes(16000 // 10 * 2)  # 100ms @ 16kHz int16 mono
 
 
 def _instr_mock(response: CoachResponse):
+    """Ollama native client mock — ``chat`` returns ``{"message":{"content": JSON}}``."""
     return SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(create=AsyncMock(return_value=response))
-        )
+        chat=AsyncMock(return_value={"message": {"content": response.model_dump_json()}})
     )
 
 
@@ -249,7 +248,7 @@ async def test_proactive_opener_propose_set_lands_in_slot() -> None:
     config = load_config()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    llm._instructor = _instr_mock(
+    llm._client = _instr_mock(
         CoachResponse(
             text="안녕! 스쿼트 15회 어때요?",
             actions=[ProposeSetAction(exercise="스쿼트", reps=15, sets=3, rest_sec=60)],
@@ -286,7 +285,7 @@ async def test_propose_set_5_scenarios(
     config = load_config()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    llm._instructor = _instr_mock(
+    llm._client = _instr_mock(
         CoachResponse(
             text=f"{exercise} {reps}회 추천해요",
             actions=[ProposeSetAction(exercise=exercise, reps=reps, sets=sets, rest_sec=rest_sec)],
@@ -312,10 +311,9 @@ async def test_injury_keyword_bypasses_llm_and_emits_safety_frame() -> None:
     config = load_config()
     slot = ConfirmSlot()
     llm = StructuredOllamaProcessor(config)
-    create_mock = AsyncMock(return_value=CoachResponse(text="LLM should NOT be called"))
-    llm._instructor = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
-    )
+    _no_call = CoachResponse(text="LLM should NOT be called").model_dump_json()
+    chat_mock = AsyncMock(return_value={"message": {"content": _no_call}})
+    llm._client = SimpleNamespace(chat=chat_mock)
 
     pipeline = _build_active_coach_pipeline(llm, slot)
     down, _ = await run_test(
@@ -325,7 +323,7 @@ async def test_injury_keyword_bypasses_llm_and_emits_safety_frame() -> None:
         ],
     )
 
-    create_mock.assert_not_called()
+    chat_mock.assert_not_called()
     assert any(isinstance(f, SafetyResponseFrame) for f in down), "SafetyResponseFrame expected"
 
 
