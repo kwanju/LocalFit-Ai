@@ -30,9 +30,16 @@
 | `ws.end()`가 소켓을 안 닫아 세션 안 끝남 | UI WS 생명주기 | **UI unit (Vitest)** |
 | 탭 이동 시 SessionProvider 언마운트 → 세션 종료 | UI 라우팅/생명주기 | **UI unit / 수동 E2E** |
 | opener가 특정 경로에서만 발화 | UI 마운트/연결 타이밍 | 수동 E2E (브라우저) |
+| 능동 인사 전면 실패(qwen3.5:9b thinking 이 num_ctx 채워 JSON 빈 문자열) | **LLM 실모델 출력** | **LLM 실모델 (`-m ollama`)** |
+| `propose_set` 필수 필드(`rest_sec`) 누락으로 응답 검증 실패 | **LLM 실모델 출력 (format=schema enum/required 미강제)** | **LLM 실모델 (`-m ollama`)** |
 
 **교훈**: mock 편중 단위 테스트는 "내가 짠 함수"만 검증한다. 버그는 **모듈·계층·프로세스가
 만나는 지점**에서 난다. 그 지점을 겨냥한 테스트가 없으면 무조건 사용자가 먼저 만난다.
+
+**특히 LLM 계층**: mock LLM 통합 테스트(`not ollama`)가 전부 통과해도, **실제 모델이 valid
+JSON 자체를 못 내는** 회귀(thinking 폭주·enum 위반·필드 누락)는 못 잡는다. 이건 오직 실제
+Ollama 를 때리는 `-m ollama` 테스트만 잡는다 — 이 계층을 일상에서 빼면 LLM 행동 회귀는
+**전부 사용자 몫**이 된다(2026-06-12 능동 인사 전면 실패가 그 사례).
 
 ---
 
@@ -42,11 +49,17 @@
 |---|---|---|---|
 | **백엔드 unit** | `tests/unit/` | 순수 도메인 로직 (cue 선택, 확답 분류, WAV 인코딩 등) | `uv run pytest tests/unit -q` |
 | **백엔드 scenario(통합)** | `tests/integration/test_counting_scenario.py` 등 | **실객체**를 엮어 사용자 흐름 구동 + **ErrorFrame 0 단언**. 런타임 배선·프레임 계약·GPU 경합 대리(=LLM 호출 여부) | `uv run pytest tests/integration -q -m "not gpu and not ollama"` |
+| **LLM 실모델 (ollama)** | `tests/integration/test_active_coach_llm.py` | **실제 qwen3.5:9b** 가 능동 인사·컨디션·확답에 valid `CoachResponse` JSON 을 내는가 — thinking off, `format=schema` 준수, enum/필드 누락, 강도 조절 제안. mock 으로는 **절대 못 잡는 모델 행동 회귀** | `uv run pytest -m ollama` (**Ollama 기동 시 필수**) |
 | **UI unit (Vitest)** | `ui/src/**/*.test.ts(x)` | WS 생명주기, reducer 상태 전이, 메시지 계약. **Python이 못 건드리는 React/WS 로직** | `cd ui && pnpm test` |
 | **수동 E2E (사람/브라우저)** | `docs/qa-checklist-v4.md` 체크리스트 | 실제 오디오 청취, 브라우저 자동재생, 마이크, 멀티탭, 음색 품질 | 사람이 §5 체크리스트로 |
 
-> 비율 의식 (회고 원칙 4): unit 다수 + scenario 충분 + UI unit 필수 + 수동 E2E는 "기계가 못
-> 듣는 것"으로 한정. 어느 하나 0이면 그 계층 버그는 전부 사용자 몫이 된다.
+> 비율 의식 (회고 원칙 4): unit 다수 + scenario 충분 + **LLM 실모델 필수** + UI unit 필수 +
+> 수동 E2E는 "기계가 못 듣는 것"으로 한정. 어느 하나 0이면 그 계층 버그는 전부 사용자 몫이 된다.
+
+> **🔴 LLM 변경 필수 게이트**: `app/prompts/`, `app/core/coach_response.py`,
+> `app/pipecat_services/ollama_service.py`, `config.yaml`(llm), 또는 모델 교체를 건드리면 —
+> 작업 완료 전 **반드시 `uv run pytest -m ollama` 를 Ollama 기동 상태에서 실행**한다. mock
+> 통합 테스트만 보고 "통과"라고 보고하지 않는다. Ollama 가 없으면 그 사실을 보고에 명시한다.
 
 ---
 

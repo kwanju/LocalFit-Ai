@@ -22,6 +22,19 @@ async def _generate(text: str) -> CoachResponse:
 
 
 @pytest.mark.asyncio
+async def test_proactive_opener_returns_valid_response_with_plan() -> None:
+    """능동 인사가 valid CoachResponse + propose_set 을 낸다 (thinking-off 회귀 가드).
+
+    qwen3.5:9b thinking 이 켜지면 reasoning 이 num_ctx 를 채워 JSON 이 빈 문자열로 잘려
+    ``_generate`` 가 예외를 던진다(2026-06-12 능동 인사 전면 실패 버그). 이 테스트가
+    실제 Ollama 로 그 회귀를 잡는다 — 예외 없이 text + propose_set 이 나와야 한다."""
+    response = await _generate(PROACTIVE_OPENER_USER_MESSAGE)
+    assert response.text, "능동 인사 text 가 비었습니다 (thinking 폭주 의심)"
+    proposes = [a for a in response.actions if a.type == "propose_set"]
+    assert len(proposes) >= 1, f"능동 인사에 운동 제안(propose_set)이 없습니다: {response}"
+
+
+@pytest.mark.asyncio
 async def test_proactive_opener_under_120_chars_soft_cap() -> None:
     """능동 인사 응답 길이 ≤ 120자 (목표 70자, 안전망 120자) — ADR-013 §응답 길이."""
     response = await _generate(PROACTIVE_OPENER_USER_MESSAGE)
@@ -30,6 +43,19 @@ async def test_proactive_opener_under_120_chars_soft_cap() -> None:
         f"능동 인사가 120자(소프트 안전망)를 넘었습니다 (len={len(response.text)}): "
         f"{response.text!r}. 70자 목표 — 시스템 프롬프트 추가 튜닝 필요."
     )
+
+
+@pytest.mark.asyncio
+async def test_condition_report_logs_and_does_not_auto_start() -> None:
+    """ADR-023: 컨디션 발화 → log_condition 기록, start_counting 직접 발행 금지.
+
+    "피곤·뻐근" 발화에 코치가 컨디션을 기록(log_condition)하고, 자동으로 카운팅을
+    시작하지 않아야 한다(강도 조절은 propose_set→확답 게이트). phase v4-3 핵심 흐름."""
+    response = await _generate("오늘 너무 피곤하고 어깨가 뻐근해요")
+    logs = [a for a in response.actions if a.type == "log_condition"]
+    starts = [a for a in response.actions if a.type == "start_counting"]
+    assert len(logs) >= 1, f"컨디션 발화에 log_condition 이 없습니다: {response}"
+    assert starts == [], f"컨디션만 말했는데 start_counting 자동 발행됨: {response}"
 
 
 @pytest.mark.asyncio

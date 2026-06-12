@@ -16,8 +16,11 @@ class ProposeSetAction(BaseModel):
     type: Literal["propose_set"] = "propose_set"
     exercise: Exercise
     reps: int = Field(ge=1, le=100)
-    sets: int = Field(ge=1, le=10)
-    rest_sec: int = Field(ge=15, le=300)
+    # sets/rest_sec 는 기본값을 둔다 — LLM(qwen3.5:9b)이 format=schema 에도 이 필드를
+    # 누락하는 경우가 있어(2026-06-12), 누락 시 합리적 기본값으로 채워 응답 실패를 막는다.
+    # StartCountingAction 과 동일 정책.
+    sets: int = Field(default=1, ge=1, le=10)
+    rest_sec: int = Field(default=60, ge=15, le=300)
 
 
 class StartCountingAction(BaseModel):
