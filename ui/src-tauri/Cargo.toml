@@ -24,3 +24,9 @@ log = "0.4"
 tauri = { version = "2.11.2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
+
+# Windows-only: auto-grant the WebView2 microphone permission so getUserMedia in
+# the webview (S2S/C2S voice input, ADR-005) works without a flaky native prompt
+# (phase v4-6 S-4 fix). Pinned to Tauri 2.11's transitive set — no version churn.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"

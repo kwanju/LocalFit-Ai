@@ -3,6 +3,7 @@
 // Mode is passed as a URL query param (?mode=C2C) so it is fixed per connection.
 // Mode changes cause a disconnect + reconnect with the new mode URL.
 
+import { wsBaseOverride } from "./origin";
 import type { ClientMessage, ExerciseMode, ServerMessage, SessionMode } from "./types";
 
 export type SocketStatus = "connecting" | "open" | "reconnecting" | "closed";
@@ -16,7 +17,7 @@ const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 8000;
 
 function resolveUrl(mode: SessionMode): string {
-  const base = import.meta.env.VITE_WS_BASE;
+  const base = wsBaseOverride();
   const modeParam = `mode=${mode.toUpperCase()}`;
   if (base) return `${base}/ws/voice?${modeParam}`;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";

@@ -2,6 +2,7 @@
 // components never fetch directly). Same-origin in dev via the Vite proxy;
 // VITE_API_BASE can point elsewhere for a separate deploy.
 
+import { restBase } from "./origin";
 import type {
   CheckinResult,
   ConditionCheckin,
@@ -11,7 +12,7 @@ import type {
   Routine,
 } from "./types";
 
-const BASE = import.meta.env.VITE_API_BASE ?? "";
+const BASE = restBase();
 const REQUEST_TIMEOUT_MS = 8000;
 
 export class ApiError extends Error {

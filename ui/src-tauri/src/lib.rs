@@ -1,6 +1,12 @@
-// LocalFit AI — Tauri shell (Phase v4-0 spike).
-// Scope: validate native gates S-5 (sidecar), S-6 (toast), S-7 (tray).
-// NOT production: backend is spawned via `uv run` from the dev tree, not a bundled binary.
+// LocalFit AI — Tauri desktop shell (production, phase v4-6; ADR-031).
+// Responsibilities: system tray + window lifecycle (S-7), native toast (S-6,
+// ADR-027), FastAPI sidecar spawn/tree-kill (S-5), and WebView2 microphone
+// permission grant for voice input (S-4, ADR-005).
+//
+// Sidecar note: the backend is launched via `uv run python -m app.main` from the
+// dev tree (matches scripts/dev.bat). Bundling Python + models into the installer
+// is deliberately out of scope (ADR-031 후순위 — a separate task); this shell
+// stabilizes the dev / externally-started backend path.
 
 use std::process::{Child, Command};
 use std::sync::Mutex;
@@ -100,6 +106,48 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// S-4 fix: WebView2 raises `PermissionRequested` for `getUserMedia`. With no
+/// handler the request is left at its default (deny/flaky prompt) and the mic
+/// never opens — voice input (S2S/C2S) breaks. We auto-grant the MICROPHONE kind
+/// so capture starts silently; everything else keeps WebView2's default.
+/// Windows-only (other platforms grant mic via the OS prompt as usual).
+#[cfg(windows)]
+fn grant_microphone_permission(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    };
+    use webview2_com::PermissionRequestedEventHandler;
+
+    let result = window.with_webview(|webview| unsafe {
+        let core = match webview.controller().CoreWebView2() {
+            Ok(core) => core,
+            Err(e) => {
+                log::error!("WebView2 core unavailable, mic permission not wired: {e}");
+                return;
+            }
+        };
+        let handler = PermissionRequestedEventHandler::create(Box::new(|_webview, args| {
+            if let Some(args) = args {
+                let mut kind = Default::default();
+                args.PermissionKind(&mut kind)?;
+                if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE {
+                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                }
+            }
+            Ok(())
+        }));
+        let mut token = Default::default();
+        if let Err(e) = core.add_PermissionRequested(&handler, &mut token) {
+            log::error!("failed to register WebView2 PermissionRequested handler: {e}");
+        } else {
+            log::info!("WebView2 microphone permission auto-grant wired");
+        }
+    });
+    if let Err(e) = result {
+        log::error!("with_webview failed, mic permission not wired: {e}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -115,11 +163,12 @@ pub fn run() {
                 )?;
             }
 
-            // S-7: system tray with menu (open / test toast / quit).
+            // S-7: system tray with menu (open / quit). The spike's "알림 테스트"
+            // item was a manual toast probe — removed now that S-6 is confirmed;
+            // real scheduled notifications land in phase v4-8 (ADR-027).
             let open_i = MenuItem::with_id(app, "open", "코치 열기", true, None::<&str>)?;
-            let notify_i = MenuItem::with_id(app, "notify", "알림 테스트", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_i, &notify_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -128,14 +177,6 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_main_window(app),
-                    "notify" => {
-                        let _ = app
-                            .notification()
-                            .builder()
-                            .title("LocalFit AI")
-                            .body("운동할 시간이에요 — 클릭하면 코치가 열려요.")
-                            .show();
-                    }
                     "quit" => {
                         if let Some(state) = app.try_state::<Backend>() {
                             if let Some(mut child) = state.0.lock().unwrap().take() {
@@ -148,13 +189,20 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // S-5: spawn the backend on launch (tolerate failure — UI still loads).
+            // S-5: spawn the backend on launch (tolerate failure — UI still loads
+            // and the sidecar-down banner offers a restart; phase v4-6 6-3).
             match spawn_backend() {
                 Ok(child) => {
                     log::info!("backend spawned pid={}", child.id());
                     app.state::<Backend>().0.lock().unwrap().replace(child);
                 }
                 Err(e) => log::error!("backend spawn failed (start it manually): {e}"),
+            }
+
+            // S-4: wire WebView2 mic permission once the main webview exists.
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                grant_microphone_permission(&window);
             }
 
             Ok(())

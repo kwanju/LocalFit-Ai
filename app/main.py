@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.api import admin, calendar, condition, health, onboarding, routine, session, ws_voice
@@ -18,6 +19,19 @@ from app.utils.logging import setup_logging
 
 HOST = "127.0.0.1"  # ADR-002: P0 local-only binding
 PORT = 8000
+
+# The Tauri webview (ADR-031) serves the bundled UI from tauri.localhost, so REST
+# calls to the 127.0.0.1 sidecar are cross-origin and need CORS. We allow only the
+# Tauri webview origins (Windows uses http://tauri.localhost) plus the dev server —
+# never the public network (binding stays 127.0.0.1, ADR-002). WebSocket (/ws/voice)
+# is unaffected: browsers don't apply CORS to WS handshakes.
+CORS_ORIGINS = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 
 class _InterceptHandler(logging.Handler):
@@ -90,6 +104,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="LocalFit AI", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(health.router)
 app.include_router(session.router)
 app.include_router(routine.router)

@@ -4,6 +4,7 @@ import { Onboarding } from "@/screens/Onboarding";
 import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
 import { Calendar } from "@/screens/Calendar";
+import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 
 // Shell that keeps ONE SessionProvider mounted across the workout tabs
 // (운동/기록/설정) so navigating between them never tears down the live session
@@ -28,6 +29,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="flex h-full flex-col">
+        <BackendStatusBanner />
         <main className="min-h-0 flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<Onboarding />} />
