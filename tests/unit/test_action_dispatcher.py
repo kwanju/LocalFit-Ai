@@ -9,6 +9,8 @@ from pipecat.tests.utils import run_test
 
 from app.core.coach_response import (
     LogConditionAction,
+    ProposePlanAction,
+    ProposePlanAdjustmentAction,
     ProposeSetAction,
     RecordConstraintAction,
     RememberFactAction,
@@ -118,3 +120,68 @@ async def test_start_counting_without_confirm_is_rejected() -> None:
     # allow_one_direct_start 호출 안 함 — 가드 활성 상태.
     await _drive(disp, [CoachActionFrame(action=StartCountingAction(exercise="푸시업", reps=10))])
     cb.assert_not_awaited()
+
+
+# --- ADR-024 플랜 확답 게이트 (회귀 가드) ----------------------------------
+
+
+async def test_propose_plan_without_confirm_does_not_commit() -> None:
+    """회귀 가드: 사용자 확답 없이 LLM 이 propose_plan 을 내면 **저장 안 함** — 제안 슬롯에만
+    들어가야 한다(회고가 경고한 '확답 없이 플랜 변경' 패턴 차단, ADR-024)."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_plan=commit)
+    action = ProposePlanAction(goals=[{"exercise": "푸시업", "target_count": 3, "reps": 10}])
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_not_awaited()           # 저장 금지
+    assert slot.has_pending_plan          # 제안만 보류
+    assert slot.pending_plan == action
+
+
+async def test_propose_plan_commits_only_after_allow() -> None:
+    """확답(ConfirmRule)이 allow_one_plan_commit() 를 켠 뒤에만 commit 콜백이 호출된다."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_plan=commit)
+    disp.allow_one_plan_commit()  # 사용자 확답 시뮬레이트
+    action = ProposePlanAction(goals=[{"exercise": "스쿼트", "target_count": 2, "reps": 15}])
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_awaited_once()
+    assert commit.call_args.args[0] == action
+    assert not slot.has_pending_plan
+
+
+async def test_plan_adjustment_without_confirm_does_not_apply() -> None:
+    """회귀 가드: 조정 제안도 확답 없이는 적용 안 됨(자동 변경 금지)."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_plan_adjustment=commit)
+    action = ProposePlanAdjustmentAction(exercise="푸시업", new_target_count=2)
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_not_awaited()
+    assert slot.has_pending_plan
+
+
+async def test_plan_adjustment_commits_only_after_allow() -> None:
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_plan_adjustment=commit)
+    disp.allow_one_plan_commit()
+    action = ProposePlanAdjustmentAction(exercise="푸시업", new_target_count=2)
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_awaited_once()
+    assert commit.call_args.args[0] == action
+
+
+async def test_allow_plan_commit_resets_after_one_use() -> None:
+    """가드는 한 번 쓰면 리셋 — 다음 LLM 발행은 다시 제안으로만 보류된다."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_plan=commit)
+    disp.allow_one_plan_commit()
+    a1 = ProposePlanAction(goals=[{"exercise": "풀업", "target_count": 1, "reps": 5}])
+    a2 = ProposePlanAction(goals=[{"exercise": "스쿼트", "target_count": 2, "reps": 15}])
+    await _drive(disp, [CoachActionFrame(action=a1)])
+    await _drive(disp, [CoachActionFrame(action=a2)])
+    commit.assert_awaited_once()          # 첫 번째만 commit
+    assert slot.pending_plan == a2        # 두 번째는 다시 보류

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from sqlmodel import Field, SQLModel
@@ -37,6 +37,14 @@ class MemoryKind(StrEnum):
     # 1층 구조화 메모리 종류 (ADR-025). injury=부상, constraint=금기·제약.
     injury = "injury"
     constraint = "constraint"
+
+
+class PlanStatus(StrEnum):
+    # 주간 플랜 상태 (ADR-024). active=진행 중, completed=목표 달성/주 종료,
+    # abandoned=사용자가 접음(확답으로 새 플랜 시작 시 이전 active 플랜 정리).
+    active = "active"
+    completed = "completed"
+    abandoned = "abandoned"
 
 
 class UserProfile(SQLModel, table=True):
@@ -86,6 +94,57 @@ class RoutineExercise(SQLModel, table=True):
     duration_sec: int | None = None
     rest_sec: int = DEFAULT_REST_SEC
     order_index: int
+
+
+class WeeklyPlan(SQLModel, table=True):
+    """주간 운동 플랜 컨테이너 (ADR-024). 한 주의 목표 묶음. 단일 사용자(ADR-002)라
+    동시에 ``active`` 는 한 개만 둔다(새 플랜 확정 시 이전 active 는 abandoned).
+
+    ``week_start`` 는 그 주의 시작일(월요일 권장). 진척·일자 분배는 ``WeeklyGoal`` ·
+    ``PlanDay`` 가 담당한다.
+    """
+
+    __tablename__ = "weekly_plan"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_profile_id: int = Field(default=DEFAULT_USER_ID, foreign_key="user_profile.id")
+    week_start: date
+    status: PlanStatus = Field(default=PlanStatus.active)
+    note: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WeeklyGoal(SQLModel, table=True):
+    """주간 목표 — 종목별 횟수 (ADR-024). 예: "이번 주 푸시업 3회" → target_count=3.
+
+    ``reps`` 는 세션당 권장 반복(횟수 종목) 또는 유지 초(플랭크). 진척(완료 횟수)은
+    ``PlanDay`` 의 completed 행 수에서 파생한다(중복 저장 안 함 → 동기화 버그 방지).
+    """
+
+    __tablename__ = "weekly_goal"
+
+    id: int | None = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="weekly_plan.id")
+    exercise: str
+    target_count: int            # 주간 목표 횟수(세션 수)
+    reps: int                    # 세션당 권장 반복/초
+
+
+class PlanDay(SQLModel, table=True):
+    """일자 분배 — 주간 목표를 요일별로 펼친 한 칸 (ADR-024). 백엔드가 ``target_count``
+    개를 한 주에 고르게 분배한다(``app.core.plan.distribute_weekdays``).
+
+    ``weekday`` 0=월 … 6=일. 카운팅 세션 완료 시 가장 이른 미완료 칸이 ``completed`` 된다.
+    """
+
+    __tablename__ = "plan_day"
+
+    id: int | None = Field(default=None, primary_key=True)
+    plan_id: int = Field(foreign_key="weekly_plan.id")
+    exercise: str
+    weekday: int                 # 0=월 … 6=일
+    completed: bool = Field(default=False)
+    completed_at: datetime | None = None
 
 
 class WorkoutSession(SQLModel, table=True):

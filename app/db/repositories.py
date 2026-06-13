@@ -6,6 +6,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import DEFAULT_USER_ID
+
+# core/plan 은 외부 의존 0 인 순수 도메인(일자 분배·진척 값객체). db→core.plan 은
+# import 사이클을 만들지 않는다(core.plan 은 어떤 것도 import 하지 않음). ADR-024.
+from app.core.plan import GoalProgress, PlanGoalSpec, distribute_weekdays
 from app.db.models import (
     DEFAULT_REST_SEC,
     ConditionLog,
@@ -15,12 +19,16 @@ from app.db.models import (
     InteractionLog,
     MemoryFact,
     MemoryKind,
+    PlanDay,
+    PlanStatus,
     Routine,
     RoutineExercise,
     SessionStatus,
     SetLog,
     UserMemory,
     UserProfile,
+    WeeklyGoal,
+    WeeklyPlan,
     WorkoutSession,
 )
 
@@ -460,3 +468,171 @@ class RoutineRepository:
         await self._session.delete(routine)
         await self._session.commit()
         return True
+
+
+def _week_start(today: date) -> date:
+    """그 주의 월요일(주 시작). 단일 사용자(ADR-002)라 타임존 분기 없음."""
+    return today - timedelta(days=today.weekday())
+
+
+class PlanRepository:
+    """주간 플랜 저장소 (ADR-024). 주간 목표(``WeeklyGoal``) + 일자 분배(``PlanDay``).
+
+    조정(목표 변경)은 **확답 게이트 통과 후** 디스패처가 호출한다 — 저장소는 자동
+    변경을 판단하지 않는다(회고 ConfirmRule 정신). 진척은 ``PlanDay`` 완료 행에서
+    파생하므로 별도 카운터 동기화 버그가 없다.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_active(self) -> WeeklyPlan | None:
+        """가장 최근 ``active`` 플랜. 없으면 None(→ 단발 제안 fallback, ADR-024)."""
+        result = await self._session.exec(
+            select(WeeklyPlan)
+            .where(WeeklyPlan.status == PlanStatus.active)
+            .order_by(WeeklyPlan.created_at.desc())
+            .limit(1)
+        )
+        return result.first()
+
+    async def create_plan(
+        self,
+        goals: list[PlanGoalSpec],
+        *,
+        week_start: date | None = None,
+        note: str | None = None,
+    ) -> WeeklyPlan:
+        """새 주간 플랜 생성. 기존 ``active`` 플랜은 ``abandoned`` 로 정리(한 번에 하나).
+
+        각 목표는 ``target_count`` 개의 ``PlanDay`` 로 한 주에 고르게 분배된다.
+        """
+        for stale in await self._active_plans():
+            stale.status = PlanStatus.abandoned
+            self._session.add(stale)
+
+        plan = WeeklyPlan(week_start=week_start or _week_start(date.today()), note=note)
+        self._session.add(plan)
+        await self._session.commit()
+        await self._session.refresh(plan)
+
+        for spec in goals:
+            self._session.add(
+                WeeklyGoal(
+                    plan_id=plan.id,
+                    exercise=spec.exercise,
+                    target_count=spec.target_count,
+                    reps=spec.reps,
+                )
+            )
+            for wd in distribute_weekdays(spec.target_count):
+                self._session.add(
+                    PlanDay(plan_id=plan.id, exercise=spec.exercise, weekday=wd)
+                )
+        await self._session.commit()
+        await self._session.refresh(plan)
+        return plan
+
+    async def _active_plans(self) -> list[WeeklyPlan]:
+        result = await self._session.exec(
+            select(WeeklyPlan).where(WeeklyPlan.status == PlanStatus.active)
+        )
+        return list(result.all())
+
+    async def list_goals(self, plan_id: int) -> list[WeeklyGoal]:
+        result = await self._session.exec(
+            select(WeeklyGoal).where(WeeklyGoal.plan_id == plan_id)
+        )
+        return list(result.all())
+
+    async def list_days(self, plan_id: int) -> list[PlanDay]:
+        result = await self._session.exec(
+            select(PlanDay).where(PlanDay.plan_id == plan_id).order_by(PlanDay.weekday)
+        )
+        return list(result.all())
+
+    async def progress(self, plan_id: int) -> list[GoalProgress]:
+        """종목별 진척(목표 대비 완료). 완료 횟수는 ``PlanDay.completed`` 행 수에서 파생."""
+        goals = await self.list_goals(plan_id)
+        days = await self.list_days(plan_id)
+        done_by_ex: dict[str, int] = {}
+        for d in days:
+            if d.completed:
+                done_by_ex[d.exercise] = done_by_ex.get(d.exercise, 0) + 1
+        return [
+            GoalProgress(
+                exercise=g.exercise,
+                target_count=g.target_count,
+                completed_count=done_by_ex.get(g.exercise, 0),
+                reps=g.reps,
+            )
+            for g in goals
+        ]
+
+    async def mark_day_done(self, plan_id: int, exercise: str) -> PlanDay | None:
+        """해당 종목의 가장 이른 미완료 칸 1개를 완료 처리. 없으면 None."""
+        result = await self._session.exec(
+            select(PlanDay)
+            .where(PlanDay.plan_id == plan_id)
+            .where(PlanDay.exercise == exercise)
+            .where(PlanDay.completed == False)  # noqa: E712 — SQLAlchemy 표현식
+            .order_by(PlanDay.weekday)
+            .limit(1)
+        )
+        day = result.first()
+        if day is None:
+            return None
+        day.completed = True
+        day.completed_at = datetime.now(UTC)
+        self._session.add(day)
+        await self._session.commit()
+        await self._session.refresh(day)
+        return day
+
+    async def adjust_goal(
+        self, plan_id: int, exercise: str, new_target_count: int
+    ) -> WeeklyGoal | None:
+        """목표 횟수 조정(확답 게이트 통과 후만 호출). 완료한 칸은 보존하고, 미완료
+        칸을 새 목표에 맞춰 재분배한다. ``new_target_count`` 가 이미 완료한 수보다
+        작으면 완료 수로 클램프(과거 기록을 지우지 않음).
+
+        대상 목표가 없으면 None.
+        """
+        result = await self._session.exec(
+            select(WeeklyGoal)
+            .where(WeeklyGoal.plan_id == plan_id)
+            .where(WeeklyGoal.exercise == exercise)
+        )
+        goal = result.first()
+        if goal is None:
+            return None
+
+        days = [
+            d
+            for d in await self.list_days(plan_id)
+            if d.exercise == exercise
+        ]
+        completed = [d for d in days if d.completed]
+        target = max(new_target_count, len(completed))
+        goal.target_count = target
+        self._session.add(goal)
+
+        # 미완료 칸 전부 제거 후, (target - 완료수)개를 다시 분배.
+        for d in days:
+            if not d.completed:
+                await self._session.delete(d)
+        for wd in distribute_weekdays(target - len(completed)):
+            self._session.add(PlanDay(plan_id=plan_id, exercise=exercise, weekday=wd))
+
+        await self._session.commit()
+        await self._session.refresh(goal)
+        return goal
+
+    async def set_status(self, plan_id: int, status: PlanStatus | str) -> None:
+        plan = await self._session.get(WeeklyPlan, plan_id)
+        if plan is None:
+            logger.warning("set_status: weekly_plan {} not found", plan_id)
+            return
+        plan.status = PlanStatus(status)
+        self._session.add(plan)
+        await self._session.commit()

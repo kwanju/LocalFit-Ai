@@ -57,12 +57,44 @@ class RememberFactAction(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class PlanGoalItem(BaseModel):
+    """주간 플랜의 종목별 목표 한 칸 (ADR-024)."""
+
+    exercise: Exercise
+    # 주간 목표 횟수(세션 수). 보통 1–7. 상한은 하루 2회까지 여유로 14.
+    target_count: int = Field(ge=1, le=14)
+    # 세션당 권장 반복(횟수 종목) 또는 유지 초(플랭크). 누락 시 합리적 기본값.
+    reps: int = Field(default=10, ge=1, le=300)
+
+
+class ProposePlanAction(BaseModel):
+    """주간 목표 제안 (ADR-024). **확답 게이트 통과 후에만** 저장된다 — LLM 이 발행해도
+    곧바로 적용되지 않고 제안 슬롯에 들어간다(자동 변경 금지, 회고 ConfirmRule 정신)."""
+
+    type: Literal["propose_plan"] = "propose_plan"
+    goals: list[PlanGoalItem] = Field(min_length=1)
+    note: str | None = None
+
+
+class ProposePlanAdjustmentAction(BaseModel):
+    """기존 주간 플랜 조정 제안 (ADR-024). 컨디션·목표 실패에 따른 강도/목표 변경 *제안*.
+    **확답 게이트 통과 후에만** 적용된다(자동 변경 금지)."""
+
+    type: Literal["propose_plan_adjustment"] = "propose_plan_adjustment"
+    exercise: Exercise
+    # 새 주간 목표 횟수. 0 = 이번 주 해당 종목 목표를 비움.
+    new_target_count: int = Field(ge=0, le=14)
+    reason: str | None = None
+
+
 CoachAction = Annotated[
     ProposeSetAction
     | StartCountingAction
     | LogConditionAction
     | RecordConstraintAction
-    | RememberFactAction,
+    | RememberFactAction
+    | ProposePlanAction
+    | ProposePlanAdjustmentAction,
     Field(discriminator="type"),
 ]
 

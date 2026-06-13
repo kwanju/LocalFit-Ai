@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.coach_context import CalendarSignals, CoachContextBuilder
+from app.core.plan import GoalProgress
 
 
 def _profile(**kw):
@@ -220,3 +221,40 @@ class TestMemoryInjection:
         )
         ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
         assert "메모: 아침 운동을 선호함" in ctx
+
+
+class TestPlanInjection:
+    """ADR-024 — 활성 주간 플랜·진척을 컨텍스트에 주입. 목표 없으면 생략."""
+
+    def _builder(self, plan_repo) -> CoachContextBuilder:
+        return CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=None)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=[])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=[])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+            plan_repo=plan_repo,
+        )
+
+    async def test_active_plan_progress_injected(self) -> None:
+        plan_repo = AsyncMock(
+            get_active=AsyncMock(return_value=SimpleNamespace(id=7)),
+            progress=AsyncMock(
+                return_value=[
+                    GoalProgress("푸시업", target_count=3, completed_count=1, reps=10),
+                    GoalProgress("스쿼트", target_count=2, completed_count=0, reps=15),
+                ]
+            ),
+        )
+        ctx = await self._builder(plan_repo).build(now=datetime(2026, 6, 2, 9, 0))
+        assert "이번 주 목표: 푸시업 1/3회, 스쿼트 0/2회" in ctx
+
+    async def test_no_active_plan_omits_line(self) -> None:
+        plan_repo = AsyncMock(get_active=AsyncMock(return_value=None))
+        ctx = await self._builder(plan_repo).build(now=datetime(2026, 6, 2, 9, 0))
+        assert "이번 주 목표" not in ctx
+
+    async def test_plan_fetch_failure_is_best_effort(self) -> None:
+        plan_repo = AsyncMock(get_active=AsyncMock(side_effect=RuntimeError("db down")))
+        ctx = await self._builder(plan_repo).build(now=datetime(2026, 6, 2, 9, 0))
+        assert "이번 주 목표" not in ctx  # 안전하게 생략, 예외 전파 X

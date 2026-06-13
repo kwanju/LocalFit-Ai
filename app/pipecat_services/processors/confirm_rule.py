@@ -23,7 +23,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from app.core.coach_response import StartCountingAction
+from app.core.coach_response import ProposePlanAdjustmentAction, StartCountingAction
 from app.core.confirm_slot import ConfirmSlot
 from app.pipecat_services.frames import CoachActionFrame
 
@@ -54,6 +54,8 @@ _REJECT_KEYWORDS: frozenset[str] = frozenset(
 
 _TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 _ACK_TEXT: str = "시작할게요."
+_PLAN_ACK_TEXT: str = "이번 주 목표로 등록할게요."
+_PLAN_ADJUST_ACK_TEXT: str = "목표를 조정할게요."
 
 
 class ConfirmRuleProcessor(FrameProcessor):
@@ -111,6 +113,27 @@ class ConfirmRuleProcessor(FrameProcessor):
                             direction,
                         )
                         await self.push_frame(TextFrame(text=_ACK_TEXT), direction)
+                        await self.push_frame(LLMFullResponseEndFrame(), direction)
+                        return
+                # 플랜 제안/조정 확답 (ADR-024): 확답 시에만 commit 을 트리거한다. 같은
+                # 액션을 재발행하되 dispatcher 의 plan-commit 가드를 한 번 풀어준다.
+                if kind == "accept" and self._slot.has_pending_plan:
+                    plan = self._slot.take_plan()
+                    if plan is not None:
+                        is_adjust = isinstance(plan, ProposePlanAdjustmentAction)
+                        logger.info(
+                            "ConfirmRuleProcessor: accept → commit {} ({})",
+                            "plan_adjustment" if is_adjust else "plan",
+                            plan,
+                        )
+                        if self._dispatcher is not None and hasattr(
+                            self._dispatcher, "allow_one_plan_commit"
+                        ):
+                            self._dispatcher.allow_one_plan_commit()
+                        ack = _PLAN_ADJUST_ACK_TEXT if is_adjust else _PLAN_ACK_TEXT
+                        await self.push_frame(LLMFullResponseStartFrame(), direction)
+                        await self.push_frame(CoachActionFrame(action=plan), direction)
+                        await self.push_frame(TextFrame(text=ack), direction)
                         await self.push_frame(LLMFullResponseEndFrame(), direction)
                         return
                 if kind == "reject":

@@ -16,6 +16,8 @@ from typing import Protocol
 
 from loguru import logger
 
+from app.core.plan import summarize_progress
+
 _MAX_CONTEXT_CHARS: int = 700
 
 
@@ -42,6 +44,11 @@ class _RoutineRepo(Protocol):
 class _MemoryRepo(Protocol):
     async def get_constraints(self) -> list: ...
     async def recent_facts(self, limit: int = 10) -> list: ...
+
+
+class _PlanRepo(Protocol):
+    async def get_active(self): ...
+    async def progress(self, plan_id: int) -> list: ...
 
 
 def _time_of_day(now: datetime) -> str:
@@ -107,6 +114,7 @@ class CoachContextBuilder:
     routine_repo: _RoutineRepo
     calendar_signals_fn: object | None = None   # async () -> CalendarSignals; phase-8 wires it
     memory_repo: _MemoryRepo | None = None      # ADR-025; phase-2 wires it
+    plan_repo: _PlanRepo | None = None          # ADR-024; phase-4 wires it
 
     async def build(self, *, recent_sessions: int = 5, now: datetime | None = None) -> str:
         now = now or datetime.now()
@@ -143,6 +151,10 @@ class CoachContextBuilder:
         ]
         if latest_condition:
             parts.append(latest_condition)
+        # 주간 플랜·진척 (ADR-024) — 목표가 있으면 "이번 주 목표: 푸시업 1/3회" 주입.
+        plan_summary = await self._plan_summary()
+        if plan_summary:
+            parts.append(plan_summary)
         if signals.weekly_pattern:
             parts.append(f"주간 패턴: {signals.weekly_pattern}")
         if signals.last_exercise:
@@ -209,6 +221,21 @@ class CoachContextBuilder:
             for c in constraints
         )
         return f"⚠️필수 제약(전량): {items}"
+
+    async def _plan_summary(self) -> str | None:
+        """활성 주간 플랜의 목표·진척을 한 줄로(ADR-024). 목표가 없으면 None →
+        프롬프트는 플랜을 언급하지 않고 코치는 단발 제안으로 진행한다(fallback)."""
+        if self.plan_repo is None:
+            return None
+        try:
+            plan = await self.plan_repo.get_active()
+            if plan is None or getattr(plan, "id", None) is None:
+                return None
+            items = await self.plan_repo.progress(plan.id)
+        except Exception as e:  # noqa: BLE001 — context is best-effort
+            logger.warning("CoachContext: plan progress fetch failed: {}", e)
+            return None
+        return summarize_progress(items)
 
     async def _recent_memo(self) -> str | None:
         """2층 자유텍스트 최근 N건. 비거나 검색 실패해도 안전에는 영향 없음."""

@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from app.core.coach_response import (
     CoachResponse,
     LogConditionAction,
+    ProposePlanAction,
+    ProposePlanAdjustmentAction,
     ProposeSetAction,
     StartCountingAction,
 )
@@ -52,6 +54,54 @@ class TestActionSchemas:
     def test_rest_sec_bounds(self, rest: int) -> None:
         with pytest.raises(ValidationError):
             ProposeSetAction(exercise="풀업", reps=8, sets=3, rest_sec=rest)
+
+
+class TestPlanActions:
+    """ADR-024 — 주간 목표/조정 액션 스키마."""
+
+    def test_propose_plan_valid(self) -> None:
+        a = ProposePlanAction(
+            goals=[{"exercise": "푸시업", "target_count": 3, "reps": 10}]
+        )
+        assert a.type == "propose_plan"
+        assert a.goals[0].exercise == "푸시업"
+        assert a.goals[0].target_count == 3
+
+    def test_propose_plan_reps_default(self) -> None:
+        a = ProposePlanAction(goals=[{"exercise": "스쿼트", "target_count": 2}])
+        assert a.goals[0].reps == 10
+
+    def test_propose_plan_requires_goal(self) -> None:
+        with pytest.raises(ValidationError):
+            ProposePlanAction(goals=[])
+
+    @pytest.mark.parametrize("count", [0, 15, -1])
+    def test_propose_plan_target_bounds(self, count: int) -> None:
+        with pytest.raises(ValidationError):
+            ProposePlanAction(goals=[{"exercise": "풀업", "target_count": count}])
+
+    def test_propose_plan_adjustment_valid(self) -> None:
+        a = ProposePlanAdjustmentAction(exercise="푸시업", new_target_count=2)
+        assert a.type == "propose_plan_adjustment"
+
+    def test_propose_plan_adjustment_allows_zero(self) -> None:
+        # 0 = 이번 주 해당 종목 목표 비움.
+        a = ProposePlanAdjustmentAction(exercise="스쿼트", new_target_count=0)
+        assert a.new_target_count == 0
+
+    def test_plan_actions_parse_in_union(self) -> None:
+        r = CoachResponse.model_validate(
+            {
+                "text": "이번 주 푸시업 3회 어때요?",
+                "actions": [
+                    {
+                        "type": "propose_plan",
+                        "goals": [{"exercise": "푸시업", "target_count": 3, "reps": 10}],
+                    },
+                ],
+            }
+        )
+        assert isinstance(r.actions[0], ProposePlanAction)
 
 
 class TestCoachResponse:

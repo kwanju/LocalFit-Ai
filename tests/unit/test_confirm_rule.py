@@ -7,9 +7,15 @@ from pipecat.frames.frames import Frame, TextFrame, TranscriptionFrame
 from pipecat.tests.utils import run_test
 from pipecat.utils.time import time_now_iso8601
 
-from app.core.coach_response import ProposeSetAction, StartCountingAction
+from app.core.coach_response import (
+    ProposePlanAction,
+    ProposePlanAdjustmentAction,
+    ProposeSetAction,
+    StartCountingAction,
+)
 from app.core.confirm_slot import ConfirmSlot
 from app.pipecat_services.frames import CoachActionFrame
+from app.pipecat_services.processors.action_dispatcher import ActionDispatcherProcessor
 from app.pipecat_services.processors.confirm_rule import ConfirmRuleProcessor
 
 
@@ -124,3 +130,71 @@ async def test_accept_without_proposal_passes_through() -> None:
     transcripts = [f for f in frames if isinstance(f, TranscriptionFrame)]
     assert actions == []
     assert len(transcripts) == 1
+
+
+# --- ADR-024 플랜 제안 확답 게이트 -----------------------------------------
+
+
+async def _send_with_dispatcher(
+    text: str, slot: ConfirmSlot, dispatcher: ActionDispatcherProcessor
+) -> list[Frame]:
+    down, _ = await run_test(
+        ConfirmRuleProcessor(slot, dispatcher=dispatcher),
+        frames_to_send=[
+            TranscriptionFrame(text=text, user_id="u", timestamp=time_now_iso8601())
+        ],
+    )
+    return list(down)
+
+
+async def test_accept_plan_emits_commit_and_arms_dispatcher() -> None:
+    """플랜 제안에 확답하면 같은 액션을 재발행하고 dispatcher 의 commit 가드를 켠다."""
+    slot = ConfirmSlot()
+    plan = ProposePlanAction(goals=[{"exercise": "푸시업", "target_count": 3, "reps": 10}])
+    slot.set_plan(plan)
+    dispatcher = ActionDispatcherProcessor(slot)
+
+    frames = await _send_with_dispatcher("좋아요", slot, dispatcher)
+
+    actions = [f for f in frames if isinstance(f, CoachActionFrame)]
+    assert len(actions) == 1
+    assert isinstance(actions[0].action, ProposePlanAction)
+    # commit 가드가 켜짐 — dispatcher 가 이 액션을 받으면 저장한다.
+    assert dispatcher._allow_plan_commit is True  # noqa: SLF001
+    assert not slot.has_pending_plan
+    ack = next(f for f in frames if type(f) is TextFrame)
+    assert "목표" in ack.text
+
+
+async def test_accept_plan_adjustment_uses_adjust_ack() -> None:
+    slot = ConfirmSlot()
+    slot.set_plan(ProposePlanAdjustmentAction(exercise="푸시업", new_target_count=2))
+    dispatcher = ActionDispatcherProcessor(slot)
+    frames = await _send_with_dispatcher("응", slot, dispatcher)
+    actions = [f for f in frames if isinstance(f, CoachActionFrame)]
+    assert isinstance(actions[0].action, ProposePlanAdjustmentAction)
+    ack = next(f for f in frames if type(f) is TextFrame)
+    assert "조정" in ack.text
+
+
+async def test_reject_plan_clears_pending() -> None:
+    slot = ConfirmSlot()
+    slot.set_plan(ProposePlanAction(goals=[{"exercise": "스쿼트", "target_count": 2}]))
+    frames = await _send("아니요", slot)
+    actions = [f for f in frames if isinstance(f, CoachActionFrame)]
+    transcripts = [f for f in frames if isinstance(f, TranscriptionFrame)]
+    assert actions == []
+    assert len(transcripts) == 1  # LLM 으로 통과
+    assert not slot.has_pending_plan
+
+
+async def test_modifying_accept_keeps_plan_for_llm() -> None:
+    """수정 의도가 담긴 확답("2회로 줄이자")은 자동 commit 하지 않고 LLM 으로 통과."""
+    slot = ConfirmSlot()
+    slot.set_plan(ProposePlanAction(goals=[{"exercise": "푸시업", "target_count": 3}]))
+    frames = await _send("2회로 줄이자", slot)
+    actions = [f for f in frames if isinstance(f, CoachActionFrame)]
+    transcripts = [f for f in frames if isinstance(f, TranscriptionFrame)]
+    assert actions == []
+    assert len(transcripts) == 1
+    assert slot.has_pending_plan  # 제안 유지 (LLM 이 갱신 제안으로 덮음)

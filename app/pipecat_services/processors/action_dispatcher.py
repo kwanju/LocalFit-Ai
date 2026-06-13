@@ -21,6 +21,8 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.core.coach_response import (
     LogConditionAction,
+    ProposePlanAction,
+    ProposePlanAdjustmentAction,
     ProposeSetAction,
     RecordConstraintAction,
     RememberFactAction,
@@ -34,12 +36,19 @@ StartCountingFn = Callable[[StartCountingAction], Awaitable[None]]
 LogConditionFn = Callable[[LogConditionAction], Awaitable[None]]
 RecordConstraintFn = Callable[[RecordConstraintAction], Awaitable[None]]
 RememberFactFn = Callable[[RememberFactAction], Awaitable[None]]
+CommitPlanFn = Callable[[ProposePlanAction], Awaitable[None]]
+CommitPlanAdjustmentFn = Callable[[ProposePlanAdjustmentAction], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
     def allow_one_direct_start(self) -> None:
         """ConfirmRule이 사용자 확답을 받아 직접 start_counting 을 emit 할 때 호출."""
         self._allow_direct_start = True
+
+    def allow_one_plan_commit(self) -> None:
+        """ConfirmRule이 플랜 제안에 대한 사용자 확답을 받아 commit 을 트리거할 때 호출
+        (ADR-024). 한 번 쓰면 리셋 — 확답 없는 LLM 플랜 발행은 절대 저장 안 됨."""
+        self._allow_plan_commit = True
 
     def __init__(
         self,
@@ -49,6 +58,8 @@ class ActionDispatcherProcessor(FrameProcessor):
         log_condition: LogConditionFn | None = None,
         record_constraint: RecordConstraintFn | None = None,
         remember_fact: RememberFactFn | None = None,
+        commit_plan: CommitPlanFn | None = None,
+        commit_plan_adjustment: CommitPlanAdjustmentFn | None = None,
         counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
@@ -57,10 +68,14 @@ class ActionDispatcherProcessor(FrameProcessor):
         self._log_condition = log_condition
         self._record_constraint = record_constraint
         self._remember_fact = remember_fact
+        self._commit_plan = commit_plan
+        self._commit_plan_adjustment = commit_plan_adjustment
         self._counting_manager = counting_manager
         # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
         # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
         self._allow_direct_start: bool = False
+        # 플랜 commit 가드 (ADR-024) — 확답 없는 플랜 변경 금지.
+        self._allow_plan_commit: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -168,6 +183,50 @@ class ActionDispatcherProcessor(FrameProcessor):
                     await self._remember_fact(action)
                 except Exception as e:  # noqa: BLE001
                     logger.error("remember_fact dispatch failed: {}", e)
+            return
+
+        if isinstance(action, ProposePlanAction):
+            # 확답 게이트 (ADR-024): 사용자 확답 없이는 플랜을 저장하지 않는다. LLM 발행은
+            # 제안 슬롯에만 들어가고, 실제 commit 은 ConfirmRule 이 확답을 받아
+            # allow_one_plan_commit() 를 켠 뒤 같은 액션을 재발행할 때만 일어난다.
+            if not self._allow_plan_commit:
+                self._slot.set_plan(action)
+                logger.info(
+                    "dispatch propose_plan (pending, 확답 대기): goals={}",
+                    [(g.exercise, g.target_count) for g in action.goals],
+                )
+                return
+            self._allow_plan_commit = False
+            logger.info(
+                "dispatch commit_plan: goals={}",
+                [(g.exercise, g.target_count) for g in action.goals],
+            )
+            if self._commit_plan is not None:
+                try:
+                    await self._commit_plan(action)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("commit_plan dispatch failed: {}", e)
+            return
+
+        if isinstance(action, ProposePlanAdjustmentAction):
+            if not self._allow_plan_commit:
+                self._slot.set_plan(action)
+                logger.info(
+                    "dispatch propose_plan_adjustment (pending, 확답 대기): "
+                    "exercise={} new_target={}",
+                    action.exercise, action.new_target_count,
+                )
+                return
+            self._allow_plan_commit = False
+            logger.info(
+                "dispatch commit_plan_adjustment: exercise={} new_target={}",
+                action.exercise, action.new_target_count,
+            )
+            if self._commit_plan_adjustment is not None:
+                try:
+                    await self._commit_plan_adjustment(action)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("commit_plan_adjustment dispatch failed: {}", e)
             return
 
         logger.warning("dispatch: unknown action type {}", type(action).__name__)

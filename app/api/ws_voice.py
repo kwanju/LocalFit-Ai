@@ -32,6 +32,7 @@ from app.config import AppConfig
 from app.core.confirm_slot import ConfirmSlot
 from app.core.counting import CompleteEvent
 from app.core.counting_cues import set_ordinal
+from app.core.plan import PlanGoalSpec
 from app.db.engine import create_db_session
 from app.db.models import SessionMode as DBSessionMode
 from app.db.models import SessionStatus
@@ -39,6 +40,7 @@ from app.db.repositories import (
     ConditionRepository,
     ExerciseRepository,
     MemoryRepository,
+    PlanRepository,
     SessionRepository,
     SetLogRepository,
 )
@@ -169,6 +171,29 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
             getattr(action, "soreness", None),
         )
 
+    # ADR-024 주간 플랜 — **확답 게이트 통과 후에만** 디스패처가 호출한다(자동 변경 X).
+    async def _commit_plan(action) -> None:
+        specs = [
+            PlanGoalSpec(exercise=g.exercise, target_count=g.target_count, reps=g.reps)
+            for g in action.goals
+        ]
+        async with create_db_session() as db:
+            plan = await PlanRepository(db).create_plan(specs, note=action.note)
+        logger.info("plan committed: id={} goals={}", plan.id, [s.exercise for s in specs])
+
+    async def _commit_plan_adjustment(action) -> None:
+        async with create_db_session() as db:
+            repo = PlanRepository(db)
+            plan = await repo.get_active()
+            if plan is None or plan.id is None:
+                logger.warning("plan adjustment skipped: no active plan")
+                return
+            await repo.adjust_goal(plan.id, action.exercise, action.new_target_count)
+        logger.info(
+            "plan adjusted: exercise={} new_target={}",
+            action.exercise, action.new_target_count,
+        )
+
     safety = SafetyGuardProcessor(
         counting_manager=counting_manager,
         record_constraint=_record_constraint,
@@ -179,6 +204,8 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         log_condition=_log_condition,
         record_constraint=_record_constraint,
         remember_fact=_remember_fact,
+        commit_plan=_commit_plan,
+        commit_plan_adjustment=_commit_plan_adjustment,
     )
     confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 
@@ -242,6 +269,23 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
                 logger.error("SetLog write failed: {}", e)
 
         async def on_session_done(event: CompleteEvent) -> None:
+            # ADR-024 진척 추적: 한 종목 운동을 끝내면 활성 플랜의 가장 이른 미완료 칸을
+            # 완료 처리한다(목표가 없으면 no-op → 단발 fallback). 자동 변경이 아니라
+            # 사용자가 실제로 한 운동의 *기록*이므로 확답 게이트 대상이 아니다.
+            try:
+                async with create_db_session() as db:
+                    repo = PlanRepository(db)
+                    plan = await repo.get_active()
+                    if plan is not None and plan.id is not None:
+                        marked = await repo.mark_day_done(plan.id, event.exercise_name)
+                        if marked is not None:
+                            logger.info(
+                                "plan day done: exercise={} plan={}",
+                                event.exercise_name, plan.id,
+                            )
+            except Exception as e:  # noqa: BLE001 — best-effort, never break follow-up
+                logger.error("plan progress update failed: {}", e)
+
             # 마지막 세트 완료 후 follow-up LLM (다음 운동/휴식/종료 제안).
             # InputTextRawFrame so the LLM treats it as a user turn (drives follow-up).
             # 마지막 세트 완료 후이므로 카운팅 비활성 — GPU 경합 없음.
