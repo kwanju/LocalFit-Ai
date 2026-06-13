@@ -1,12 +1,16 @@
 """CoachContextBuilder — repo-mocked context string output (ADR-013)."""
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.coach_context import CalendarSignals, CoachContextBuilder
+from app.core.coach_context import (
+    CalendarSignals,
+    CoachContextBuilder,
+    is_first_session,
+)
 from app.core.plan import GoalProgress
 
 
@@ -221,6 +225,131 @@ class TestMemoryInjection:
         )
         ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
         assert "메모: 아침 운동을 선호함" in ctx
+
+
+def _baseline(exercise: str, value: int, metric: str = "reps", age_days: int = 0):
+    return SimpleNamespace(
+        exercise=exercise,
+        metric=metric,
+        value=value,
+        updated_at=datetime.now(UTC) - timedelta(days=age_days),
+    )
+
+
+class TestFirstSession:
+    """ADR-028 — 첫 세션(기준선·기록 없음) 대화형 체력검증 진입."""
+
+    def _builder(self, *, memory_repo, profile=None, sessions=None, set_logs=None):
+        return CoachContextBuilder(
+            profile_repo=AsyncMock(get=AsyncMock(return_value=profile)),
+            session_repo=AsyncMock(get_recent=AsyncMock(return_value=sessions or [])),
+            set_repo=AsyncMock(get_by_session=AsyncMock(return_value=set_logs or [])),
+            condition_repo=AsyncMock(),
+            routine_repo=AsyncMock(list_all=AsyncMock(return_value=[])),
+            memory_repo=memory_repo,
+        )
+
+    async def test_first_session_injects_block_with_seed(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[]),
+        )
+        profile = _profile(assessment_json='{"푸시업": 15, "플랭크": 30}')
+        ctx = await self._builder(memory_repo=mem, profile=profile).build(
+            now=datetime(2026, 6, 2, 9, 0)
+        )
+        assert "🔰 첫 세션" in ctx
+        assert "푸시업 15회" in ctx
+        assert "플랭크 30초" in ctx  # 플랭크는 초 단위 표기
+        assert "set_baseline" in ctx
+
+    async def test_first_session_without_seed_collects_in_conversation(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[]),
+        )
+        ctx = await self._builder(memory_repo=mem, profile=_profile()).build(
+            now=datetime(2026, 6, 2, 9, 0)
+        )
+        assert "🔰 첫 세션" in ctx
+        assert "온보딩 자가보고 없음" in ctx
+
+    async def test_existing_baseline_is_not_first_session(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[_baseline("푸시업", 15)]),
+        )
+        ctx = await self._builder(memory_repo=mem, profile=_profile()).build(
+            now=datetime(2026, 6, 2, 9, 0)
+        )
+        assert "🔰 첫 세션" not in ctx
+
+    async def test_effective_session_is_not_first_session(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[]),
+        )
+        # 세션 1개 + set_log 1개 → effective → 첫 세션 아님.
+        b = self._builder(
+            memory_repo=mem,
+            profile=_profile(),
+            sessions=[_session(1)],
+            set_logs=[_set_log(1)],
+        )
+        ctx = await b.build(now=datetime(2026, 6, 2, 9, 0))
+        assert "🔰 첫 세션" not in ctx
+
+    async def test_stale_baseline_hints_reassessment(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[_baseline("푸시업", 15, age_days=40)]),
+        )
+        ctx = await self._builder(memory_repo=mem, profile=_profile()).build(
+            now=datetime(2026, 6, 2, 9, 0)
+        )
+        assert "기준선이" in ctx and "재측정" in ctx
+
+    async def test_recent_baseline_no_reassessment_hint(self) -> None:
+        mem = AsyncMock(
+            get_constraints=AsyncMock(return_value=[]),
+            recent_facts=AsyncMock(return_value=[]),
+            get_baseline=AsyncMock(return_value=[_baseline("푸시업", 15, age_days=3)]),
+        )
+        ctx = await self._builder(memory_repo=mem, profile=_profile()).build(
+            now=datetime(2026, 6, 2, 9, 0)
+        )
+        assert "재측정" not in ctx
+
+
+class TestIsFirstSession:
+    async def test_true_when_no_baseline_no_sessions(self) -> None:
+        result = await is_first_session(
+            AsyncMock(get_baseline=AsyncMock(return_value=[])),
+            AsyncMock(get_recent=AsyncMock(return_value=[])),
+            AsyncMock(get_by_session=AsyncMock(return_value=[])),
+        )
+        assert result is True
+
+    async def test_false_when_baseline_exists(self) -> None:
+        result = await is_first_session(
+            AsyncMock(get_baseline=AsyncMock(return_value=[_baseline("푸시업", 15)])),
+            AsyncMock(get_recent=AsyncMock(return_value=[])),
+            AsyncMock(get_by_session=AsyncMock(return_value=[])),
+        )
+        assert result is False
+
+    async def test_false_when_effective_session_exists(self) -> None:
+        result = await is_first_session(
+            AsyncMock(get_baseline=AsyncMock(return_value=[])),
+            AsyncMock(get_recent=AsyncMock(return_value=[_session(1)])),
+            AsyncMock(get_by_session=AsyncMock(return_value=[_set_log(1)])),
+        )
+        assert result is False
 
 
 class TestPlanInjection:

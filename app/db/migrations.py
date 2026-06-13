@@ -101,9 +101,24 @@ async def _step_2_condition_checkin(conn: AsyncConnection) -> None:
     await conn.execute(text("ALTER TABLE condition_log_new RENAME TO condition_log"))
 
 
+async def _step_3_profile_assessment_seed(conn: AsyncConnection) -> None:
+    """ADR-028: 온보딩 자가보고 시드 보존 — ``user_profile.assessment_json`` 추가.
+
+    첫 체력검증 대화에서 코치가 원본 자가보고치를 시드로 쓰려면 보존이 필요하다
+    (routine 처방은 0.65× 라 원본 손실). 단순 컬럼 추가라 ``_column_exists`` 가드로
+    멱등 처리한다. 새 DB 는 ``create_all`` 이 이미 컬럼을 만들어 이 스텝은 즉시 반환.
+    """
+    if await _column_exists(conn, "user_profile", "assessment_json"):
+        return
+    await conn.execute(
+        text("ALTER TABLE user_profile ADD COLUMN assessment_json VARCHAR NOT NULL DEFAULT '{}'")
+    )
+
+
 _STEPS: list[MigrationStep] = [
     _step_1_drop_s2c_mode,
     _step_2_condition_checkin,
+    _step_3_profile_assessment_seed,
 ]
 
 

@@ -87,6 +87,26 @@ class ProposePlanAdjustmentAction(BaseModel):
     reason: str | None = None
 
 
+class BaselineEntry(BaseModel):
+    """첫 체력검증 기준선 한 칸 (ADR-028/025 1층). metric: 횟수 종목="reps",
+    플랭크 등 시간 종목="duration_sec". value 는 자가보고 최대치(시작 강도가 아닌 기준선)."""
+
+    exercise: Exercise
+    metric: Literal["reps", "duration_sec"] = "reps"
+    value: int = Field(ge=1, le=600)
+
+
+class SetBaselineAction(BaseModel):
+    """첫 체력검증 결과 저장 (ADR-028). 코치가 온보딩 시드를 대화로 확인·보정한 뒤
+    발행한다 — 자가보고 + 보수적 시작이라 부상 기록처럼 즉시 1층 ``fitness_baseline``
+    에 저장된다(별도 확답 게이트 없음). 실제 운동 *시작*은 함께 내는 ``propose_set`` 의
+    확답 게이트가 막으므로 "동의 없이 첫 루틴 미확정" 회귀 가드는 유지된다."""
+
+    type: Literal["set_baseline"] = "set_baseline"
+    entries: list[BaselineEntry] = Field(min_length=1)
+    note: str | None = None
+
+
 CoachAction = Annotated[
     ProposeSetAction
     | StartCountingAction
@@ -94,7 +114,8 @@ CoachAction = Annotated[
     | RecordConstraintAction
     | RememberFactAction
     | ProposePlanAction
-    | ProposePlanAdjustmentAction,
+    | ProposePlanAdjustmentAction
+    | SetBaselineAction,
     Field(discriminator="type"),
 ]
 

@@ -76,6 +76,8 @@ async def get_onboarding(session: AsyncSession = Depends(get_session)) -> Onboar
 async def submit_onboarding(
     body: OnboardingRequest, session: AsyncSession = Depends(get_session)
 ) -> OnboardingResult:
+    maxes = body.assessment.to_maxes() if body.assessment else {}
+
     profile = await UserProfileRepository(session).upsert(
         name=body.name,
         fitness_level=body.fitness_level,
@@ -84,9 +86,10 @@ async def submit_onboarding(
         age=body.age,
         weight_kg=body.weight_kg,
         height_cm=body.height_cm,
+        # 원본 자가보고치를 시드로 보존 (ADR-028 첫 체력검증 대화).
+        assessment=maxes,
     )
 
-    maxes = body.assessment.to_maxes() if body.assessment else {}
     prescriptions = (
         routine_from_assessment(maxes)
         if maxes

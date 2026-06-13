@@ -29,6 +29,7 @@ from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPI
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import AppConfig
+from app.core.coach_context import is_first_session
 from app.core.confirm_slot import ConfirmSlot
 from app.core.counting import CompleteEvent
 from app.core.counting_cues import set_ordinal
@@ -58,6 +59,7 @@ from app.pipecat_services.processors.ui_text_broadcast import UITextBroadcastPro
 from app.pipecat_services.service_factory import build_stt_service, build_tts_service
 from app.prompts.coaching import (
     COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
+    FIRST_SESSION_OPENER_USER_MESSAGE,
     PLAN_ADJUST_DONE_FOLLOW_UP_MESSAGE,
     PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE,
     PROACTIVE_OPENER_USER_MESSAGE,
@@ -173,6 +175,20 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
             getattr(action, "soreness", None),
         )
 
+    # ADR-028 첫 체력검증 — 대화로 확인된 자가보고 기준선을 1층에 즉시 저장(확답 게이트는
+    # 함께 내는 propose_set 이 운동 *시작* 에만 적용). 종목·지표별 upsert 라 재측정도 갱신.
+    async def _set_baseline(action) -> None:
+        async with create_db_session() as db:
+            repo = MemoryRepository(db)
+            for entry in action.entries:
+                await repo.set_baseline(
+                    entry.exercise, entry.metric, entry.value, note=action.note
+                )
+        logger.info(
+            "baseline set: {}",
+            [(e.exercise, e.metric, e.value) for e in action.entries],
+        )
+
     # ADR-024 주간 플랜 — **확답 게이트 통과 후에만** 디스패처가 호출한다(자동 변경 X).
     async def _commit_plan(action) -> None:
         specs = [
@@ -224,6 +240,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         remember_fact=_remember_fact,
         commit_plan=_commit_plan,
         commit_plan_adjustment=_commit_plan_adjustment,
+        set_baseline=_set_baseline,
     )
     confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 
@@ -371,9 +388,26 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         await worker.queue_frame(session_started_msg)
 
         if proactive_enabled:
+            # ADR-028: 첫 세션이면 능동 운동 제안 대신 대화형 체력검증 인사를 연다.
+            opener = PROACTIVE_OPENER_USER_MESSAGE
+            if config is not None:
+                try:
+                    async with create_db_session() as db:
+                        if await is_first_session(
+                            MemoryRepository(db),
+                            SessionRepository(db),
+                            SetLogRepository(db),
+                            recent_sessions=getattr(
+                                config.coach, "context_recent_sessions", 5
+                            ),
+                        ):
+                            opener = FIRST_SESSION_OPENER_USER_MESSAGE
+                            logger.info("ws_voice: first session — assessment opener (ADR-028)")
+                except Exception as e:  # noqa: BLE001 — best-effort, fall back to normal opener
+                    logger.warning("first-session detection failed, normal opener: {}", e)
             logger.info("ws_voice: injecting proactive opener (ADR-013 §0)")
             # InputTextRawFrame so the LLM treats it as a user turn (drives the opener).
-            await worker.queue_frame(InputTextRawFrame(text=PROACTIVE_OPENER_USER_MESSAGE))
+            await worker.queue_frame(InputTextRawFrame(text=opener))
 
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:

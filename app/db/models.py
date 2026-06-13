@@ -58,6 +58,11 @@ class UserProfile(SQLModel, table=True):
     fitness_level: FitnessLevel = Field(default=FitnessLevel.beginner)
     goal: str | None = None  # 온보딩 1단계 목표 (PRD 부록 A-1)
     available_times: str = Field(default="[]")  # JSON array
+    # 온보딩 자가보고 최대치 원본 (ADR-028 첫 체력검증의 대화 시드). 예:
+    # {"푸시업": 15, "플랭크": 30}. routine 처방값(0.65×)과 달리 *원본*을 보존해야
+    # 코치가 "15개 맞나요?" 로 확인할 수 있다. 첫 세션 검증의 시드이며, 확정 기준선은
+    # phase v4-5 가 대화 합의 후 fitness_baseline 에 저장한다.
+    assessment_json: str = Field(default="{}")  # JSON object {exercise: max}
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

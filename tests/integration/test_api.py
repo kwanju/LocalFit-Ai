@@ -115,3 +115,21 @@ def test_onboarding_generates_first_routine(client: TestClient) -> None:
     status = client.get("/onboarding")
     assert status.json()["onboarded"] is True
     assert status.json()["profile"]["goal"] == "근력 향상"
+
+
+def test_onboarding_persists_assessment_seed(client: TestClient) -> None:
+    """ADR-028: 자가보고 원본 maxes 가 profile.assessment_json 에 보존된다(첫 검증 시드)."""
+    import json
+
+    response = client.post(
+        "/onboarding",
+        json={
+            "name": "관주",
+            "fitness_level": "intermediate",
+            "available_times": [],
+            "assessment": {"pushup_max": 15, "plank_max_sec": 30},
+        },
+    )
+    assert response.status_code == 201
+    seed = json.loads(response.json()["profile"]["assessment_json"])
+    assert seed == {"푸시업": 15, "플랭크": 30}

@@ -9,6 +9,7 @@ from app.core.coach_response import (
     ProposePlanAction,
     ProposePlanAdjustmentAction,
     ProposeSetAction,
+    SetBaselineAction,
     StartCountingAction,
 )
 
@@ -102,6 +103,52 @@ class TestPlanActions:
             }
         )
         assert isinstance(r.actions[0], ProposePlanAction)
+
+
+class TestBaselineAction:
+    """ADR-028 — 첫 체력검증 기준선 저장 액션."""
+
+    def test_set_baseline_valid(self) -> None:
+        a = SetBaselineAction(
+            entries=[
+                {"exercise": "푸시업", "metric": "reps", "value": 15},
+                {"exercise": "플랭크", "metric": "duration_sec", "value": 30},
+            ]
+        )
+        assert a.type == "set_baseline"
+        assert a.entries[0].exercise == "푸시업"
+        assert a.entries[1].metric == "duration_sec"
+
+    def test_metric_defaults_to_reps(self) -> None:
+        a = SetBaselineAction(entries=[{"exercise": "스쿼트", "value": 20}])
+        assert a.entries[0].metric == "reps"
+
+    def test_requires_at_least_one_entry(self) -> None:
+        with pytest.raises(ValidationError):
+            SetBaselineAction(entries=[])
+
+    @pytest.mark.parametrize("value", [0, -1, 601])
+    def test_value_bounds(self, value: int) -> None:
+        with pytest.raises(ValidationError):
+            SetBaselineAction(entries=[{"exercise": "풀업", "value": value}])
+
+    def test_unknown_exercise_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SetBaselineAction(entries=[{"exercise": "데드리프트", "value": 10}])
+
+    def test_parses_in_union(self) -> None:
+        r = CoachResponse.model_validate(
+            {
+                "text": "푸시업 15개 맞으시면 70%인 10개로 시작할게요.",
+                "actions": [
+                    {
+                        "type": "set_baseline",
+                        "entries": [{"exercise": "푸시업", "metric": "reps", "value": 15}],
+                    }
+                ],
+            }
+        )
+        assert isinstance(r.actions[0], SetBaselineAction)
 
 
 class TestCoachResponse:

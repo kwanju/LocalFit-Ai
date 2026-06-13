@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol
 
 from loguru import logger
@@ -19,6 +19,13 @@ from loguru import logger
 from app.core.plan import summarize_progress
 
 _MAX_CONTEXT_CHARS: int = 700
+
+# ADR-028: 기준선이 이 일수 이상 지나면 재평가(재측정 대화)를 권하는 힌트를 주입한다.
+# (사용자의 "너무 쉬움/어려움" 피드백 트리거는 프롬프트가 직접 처리 — 시간 트리거가 이쪽.)
+_BASELINE_REASSESS_DAYS: int = 28
+
+# 시간(초) 기준 종목 — 기준선 metric 이 duration_sec 이고, 시드 표기 단위가 "초".
+_TIMER_EXERCISES: frozenset[str] = frozenset({"플랭크"})
 
 
 class _ProfileRepo(Protocol):
@@ -44,6 +51,7 @@ class _RoutineRepo(Protocol):
 class _MemoryRepo(Protocol):
     async def get_constraints(self) -> list: ...
     async def recent_facts(self, limit: int = 10) -> list: ...
+    async def get_baseline(self) -> list: ...
 
 
 class _PlanRepo(Protocol):
@@ -119,22 +127,11 @@ class CoachContextBuilder:
     async def build(self, *, recent_sessions: int = 5, now: datetime | None = None) -> str:
         now = now or datetime.now()
         profile = await self.profile_repo.get()
-        # over-fetch raw sessions, then keep only those with at least one SetLog
-        # (연결만 하고 운동 안 한 세션은 LLM 컨텍스트에서 제외 — 신규 사용자 시나리오).
-        raw_sessions = await self.session_repo.get_recent(limit=recent_sessions * 4)
-        effective_sessions: list = []
-        for s in raw_sessions:
-            if s.id is None:
-                continue
-            try:
-                sl = await self.set_repo.get_by_session(s.id)
-            except Exception:  # noqa: BLE001 — best-effort
-                sl = []
-            if sl:
-                effective_sessions.append(s)
-                if len(effective_sessions) >= recent_sessions:
-                    break
-        sessions = effective_sessions
+        # 연결만 하고 운동 안 한 세션(SetLog 없음)은 LLM 컨텍스트에서 제외 — 신규 사용자
+        # 시나리오. 효과 세션 계산은 첫-세션 판정과 공유한다(ADR-028).
+        sessions = await compute_effective_sessions(
+            self.session_repo, self.set_repo, recent_sessions=recent_sessions
+        )
         routines = await self.routine_repo.list_all()
 
         latest_condition = await self._latest_condition()
@@ -144,11 +141,27 @@ class CoachContextBuilder:
         # 1층 부상/제약 — 안전 직결. cap 면제로 항상 전량 주입(ADR-025).
         safety_block = await self._safety_block()
 
-        parts: list[str] = [
-            _profile_summary(profile),
-            _routine_summary(routines),
-            _recent_sessions_summary(sessions),
-        ]
+        # ADR-028 첫 체력검증 — 기준선·기록 모두 없으면 대화형 검증 흐름을 지시한다.
+        baselines = await self._get_baselines()
+        first_session_note = (
+            self._first_session_block(profile) if (not sessions and not baselines) else None
+        )
+
+        parts: list[str] = [_profile_summary(profile)]
+        if first_session_note:
+            # 첫 세션 지시는 가장 앞에 둬 cap(꼬리 절단)에서 살아남게 한다.
+            parts.append(first_session_note)
+        parts.extend(
+            [
+                _routine_summary(routines),
+                _recent_sessions_summary(sessions),
+            ]
+        )
+        # 기준선이 오래됐으면 재평가(재측정) 권유 힌트 (ADR-028 N주 트리거).
+        if baselines and not first_session_note:
+            stale = _baseline_reassess_hint(baselines)
+            if stale:
+                parts.append(stale)
         if latest_condition:
             parts.append(latest_condition)
         # 주간 플랜·진척 (ADR-024) — 목표가 있으면 "이번 주 목표: 푸시업 1/3회" 주입.
@@ -249,6 +262,35 @@ class CoachContextBuilder:
             return None
         return "메모: " + " / ".join(f.text for f in facts)
 
+    async def _get_baselines(self) -> list:
+        """1층 기준선 전량(없거나 조회 실패면 빈 리스트). 첫-세션 판정·재평가 힌트 공용."""
+        if self.memory_repo is None:
+            return []
+        try:
+            result = await self.memory_repo.get_baseline()
+        except Exception:  # noqa: BLE001 — best-effort
+            return []
+        return result if isinstance(result, list) else []
+
+    def _first_session_block(self, profile) -> str:
+        """ADR-028 첫 체력검증 지시문 + 온보딩 자가보고 시드.
+
+        고정값을 던지지 말고, 온보딩 시드를 대화로 확인·보정한 뒤 보수적(≈70%) 시작을
+        제안하라고 코치에게 지시한다. 시드가 없으면 대화로 수집(안 행복한 경로)."""
+        seed = _parse_assessment_seed(profile)
+        if seed:
+            seed_line = "온보딩 자가보고 시드: " + ", ".join(
+                f"{ex} {val}{'초' if ex in _TIMER_EXERCISES else '회'}"
+                for ex, val in seed.items()
+            )
+        else:
+            seed_line = "온보딩 자가보고 없음(대화로 종목별 가능 횟수를 물어 수집)."
+        # 짧게 유지 — 길고 메타적인 지시는 9b 의 구조화(JSON) 출력 안정성을 떨어뜨린다.
+        return (
+            f"🔰 첫 세션(기준선 없음): 대화로 체력 확인. {seed_line} 시드가 맞는지 확인한 뒤 "
+            "70% 보수적 시작을 제안하고, 동의하면 set_baseline 으로 저장. 한계 측정 금지."
+        )
+
     async def _calendar_signals(self) -> CalendarSignals:
         # Phase-8 wires app.core.calendar_metrics here. Until then return zeros
         # so the prompt simply omits weekly-pattern hints.
@@ -272,3 +314,95 @@ def parse_available_times(profile) -> list[str]:
         return list(json.loads(raw))
     except (TypeError, ValueError):
         return []
+
+
+def _parse_assessment_seed(profile) -> dict[str, int]:
+    """UserProfile.assessment_json (온보딩 자가보고 원본 시드) defensive parse.
+
+    값이 정수로 떨어지지 않으면 버린다(LLM/UI 오염 방지). 키는 종목명."""
+    raw = getattr(profile, "assessment_json", None)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    seed: dict[str, int] = {}
+    for ex, val in data.items():
+        try:
+            seed[str(ex)] = int(val)
+        except (TypeError, ValueError):
+            continue
+    return seed
+
+
+def _baseline_reassess_hint(baselines: list) -> str | None:
+    """기준선이 ``_BASELINE_REASSESS_DAYS`` 이상 지났으면 재평가 권유 힌트(ADR-028).
+
+    가장 오래된 ``updated_at`` 기준. tz 혼선을 피하려 항상 UTC now 로 비교한다."""
+    stamps: list[datetime] = []
+    for b in baselines:
+        ts = getattr(b, "updated_at", None)
+        if isinstance(ts, datetime):
+            stamps.append(ts if ts.tzinfo else ts.replace(tzinfo=UTC))
+    if not stamps:
+        return None
+    oldest = min(stamps)
+    age_days = (datetime.now(UTC) - oldest).days
+    if age_days < _BASELINE_REASSESS_DAYS:
+        return None
+    return (
+        f"기준선이 {age_days}일 지났습니다 — 너무 쉽거나 어렵지 않은지 물어보고 필요하면 "
+        "set_baseline 으로 재측정(갱신)을 제안하세요."
+    )
+
+
+async def compute_effective_sessions(
+    session_repo: _SessionRepo,
+    set_repo: _SetLogRepo,
+    *,
+    recent_sessions: int = 5,
+) -> list:
+    """SetLog 가 1개 이상 있는 최근 세션만(최대 ``recent_sessions`` 개).
+
+    연결만 하고 운동 안 한 세션은 제외 — 빈 리스트면 신규/첫 사용자로 취급한다.
+    build() 와 첫-세션 판정(is_first_session)이 공유하는 단일 진실."""
+    raw_sessions = await session_repo.get_recent(limit=recent_sessions * 4)
+    effective: list = []
+    for s in raw_sessions:
+        if s.id is None:
+            continue
+        try:
+            sl = await set_repo.get_by_session(s.id)
+        except Exception:  # noqa: BLE001 — best-effort
+            sl = []
+        if sl:
+            effective.append(s)
+            if len(effective) >= recent_sessions:
+                break
+    return effective
+
+
+async def is_first_session(
+    memory_repo: _MemoryRepo,
+    session_repo: _SessionRepo,
+    set_repo: _SetLogRepo,
+    *,
+    recent_sessions: int = 5,
+) -> bool:
+    """첫 세션 판정 (ADR-028): 효과 세션도 기준선도 없을 때 True.
+
+    ws_voice 가 능동 인사 메시지를 첫-세션용으로 고를 때, 그리고 테스트가 검증할 때
+    쓴다. 컨텍스트 빌더 build() 의 첫-세션 블록과 동일 기준."""
+    eff = await compute_effective_sessions(
+        session_repo, set_repo, recent_sessions=recent_sessions
+    )
+    if eff:
+        return False
+    try:
+        baselines = await memory_repo.get_baseline()
+    except Exception:  # noqa: BLE001 — best-effort
+        baselines = []
+    return not baselines

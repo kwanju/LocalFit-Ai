@@ -11,13 +11,37 @@ import pytest
 from app.config import load_config
 from app.core.coach_response import CoachResponse
 from app.pipecat_services.ollama_service import StructuredOllamaProcessor
-from app.prompts.coaching import PROACTIVE_OPENER_USER_MESSAGE
+from app.prompts.coaching import (
+    FIRST_SESSION_OPENER_USER_MESSAGE,
+    PROACTIVE_OPENER_USER_MESSAGE,
+)
 
 pytestmark = pytest.mark.ollama
+
+# ADR-028 첫 세션 컨텍스트 — 실제 ws_voice 가 주입하는 "🔰 첫 세션" 블록을 모사한다.
+_FIRST_SESSION_CONTEXT = (
+    "사용자: 30대 / 🔰 첫 세션(기준선 미설정): 고정값을 던지지 말고 대화로 체력을 "
+    "확인하세요. 온보딩 자가보고 시드: 푸시업 15회, 플랭크 30초 시드 값을 사용자에게 "
+    "확인·보정한 뒤 약 70% 수준의 보수적 시작을 제안하고, 사용자가 동의하면 set_baseline "
+    "으로 종목별 기준선을 저장하세요. 한계(최대 1세트) 측정은 시키지 마세요."
+)
+
+
+class _FixedContext:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    async def build(self, *, recent_sessions: int = 5, now=None) -> str:
+        return self._text
 
 
 async def _generate(text: str) -> CoachResponse:
     proc = StructuredOllamaProcessor(load_config())
+    return await proc._generate(text)
+
+
+async def _generate_with_context(context: str, text: str) -> CoachResponse:
+    proc = StructuredOllamaProcessor(load_config(), _FixedContext(context))
     return await proc._generate(text)
 
 
@@ -86,3 +110,17 @@ async def test_explicit_plan_emits_propose_set_not_start() -> None:
     assert len(propose) >= 1, f"propose_set 기대: {response}"
     assert start == [], f"start_counting 직접 발행하면 안 됨: {response}"
     assert propose[0].exercise == "푸시업"
+
+
+@pytest.mark.asyncio
+async def test_first_session_does_not_auto_start_counting() -> None:
+    """ADR-028 첫 세션: 능동 인사가 곧바로 운동을 시작(start_counting)시키지 않는다.
+
+    "🔰 첫 세션" 컨텍스트에서는 대화로 체력을 확인하는 흐름이어야 하므로, 어떤 경우에도
+    start_counting 을 직접 발행하면 안 된다(실제 시작은 propose_set→확답 게이트)."""
+    response = await _generate_with_context(
+        _FIRST_SESSION_CONTEXT, FIRST_SESSION_OPENER_USER_MESSAGE
+    )
+    assert response.text, "첫 세션 인사 text 가 비었습니다"
+    starts = [a for a in response.actions if a.type == "start_counting"]
+    assert starts == [], f"첫 세션인데 start_counting 자동 발행됨: {response}"

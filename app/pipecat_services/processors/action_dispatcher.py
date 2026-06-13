@@ -26,6 +26,7 @@ from app.core.coach_response import (
     ProposeSetAction,
     RecordConstraintAction,
     RememberFactAction,
+    SetBaselineAction,
     StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
@@ -38,6 +39,7 @@ RecordConstraintFn = Callable[[RecordConstraintAction], Awaitable[None]]
 RememberFactFn = Callable[[RememberFactAction], Awaitable[None]]
 CommitPlanFn = Callable[[ProposePlanAction], Awaitable[None]]
 CommitPlanAdjustmentFn = Callable[[ProposePlanAdjustmentAction], Awaitable[None]]
+SetBaselineFn = Callable[[SetBaselineAction], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
@@ -60,6 +62,7 @@ class ActionDispatcherProcessor(FrameProcessor):
         remember_fact: RememberFactFn | None = None,
         commit_plan: CommitPlanFn | None = None,
         commit_plan_adjustment: CommitPlanAdjustmentFn | None = None,
+        set_baseline: SetBaselineFn | None = None,
         counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
@@ -70,6 +73,7 @@ class ActionDispatcherProcessor(FrameProcessor):
         self._remember_fact = remember_fact
         self._commit_plan = commit_plan
         self._commit_plan_adjustment = commit_plan_adjustment
+        self._set_baseline = set_baseline
         self._counting_manager = counting_manager
         # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
         # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
@@ -183,6 +187,21 @@ class ActionDispatcherProcessor(FrameProcessor):
                     await self._remember_fact(action)
                 except Exception as e:  # noqa: BLE001
                     logger.error("remember_fact dispatch failed: {}", e)
+            return
+
+        if isinstance(action, SetBaselineAction):
+            # 첫 체력검증 결과 (ADR-028). 대화로 확인된 자가보고치라 record_constraint 와
+            # 동일하게 확답 없이 즉시 1층 fitness_baseline 에 저장한다. 운동 *시작* 은
+            # 함께 내는 propose_set 의 확답 게이트가 막으므로 회귀 가드는 그대로 유지.
+            logger.info(
+                "dispatch set_baseline: entries={}",
+                [(e.exercise, e.metric, e.value) for e in action.entries],
+            )
+            if self._set_baseline is not None:
+                try:
+                    await self._set_baseline(action)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("set_baseline dispatch failed: {}", e)
             return
 
         if isinstance(action, ProposePlanAction):

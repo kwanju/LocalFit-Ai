@@ -274,6 +274,7 @@ class UserProfileRepository:
         age: int | None = None,
         weight_kg: float | None = None,
         height_cm: float | None = None,
+        assessment: dict[str, int] | None = None,
     ) -> UserProfile:
         profile = await self.get()
         if profile is None:
@@ -285,6 +286,10 @@ class UserProfileRepository:
         profile.fitness_level = fitness_level
         profile.goal = goal
         profile.available_times = json.dumps(available_times, ensure_ascii=False)
+        # 온보딩 자가보고 원본 시드 (ADR-028). 미입력(빈 dict)이면 기존 값을 덮어쓰지
+        # 않는다 — 재온보딩 시 측정칸을 비워도 이전 시드를 보존한다.
+        if assessment:
+            profile.assessment_json = json.dumps(assessment, ensure_ascii=False)
         self._session.add(profile)
         await self._session.commit()
         await self._session.refresh(profile)

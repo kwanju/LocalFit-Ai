@@ -14,6 +14,7 @@ from app.core.coach_response import (
     ProposeSetAction,
     RecordConstraintAction,
     RememberFactAction,
+    SetBaselineAction,
     StartCountingAction,
 )
 from app.core.confirm_slot import ConfirmSlot
@@ -93,6 +94,35 @@ async def test_remember_fact_invokes_callback() -> None:
     await _drive(disp, [CoachActionFrame(action=action)])
     cb.assert_awaited_once()
     assert cb.call_args.args[0] == action
+
+
+async def test_set_baseline_invokes_callback() -> None:
+    """ADR-028 — set_baseline 은 (대화로 확인된) 자가보고치라 확답 없이 즉시 저장."""
+    slot = ConfirmSlot()
+    cb = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, set_baseline=cb)
+    action = SetBaselineAction(
+        entries=[{"exercise": "푸시업", "metric": "reps", "value": 15}]
+    )
+    await _drive(disp, [CoachActionFrame(action=action)])
+    cb.assert_awaited_once()
+    assert cb.call_args.args[0] == action
+    # 기준선 저장은 운동 시작이 아니다 — 슬롯/카운팅을 건드리면 안 됨.
+    assert not slot.has_pending
+
+
+async def test_set_baseline_does_not_start_counting() -> None:
+    """회귀 가드: 기준선 저장이 카운팅을 직접 시작시키지 않는다(시작은 propose_set 확답)."""
+    slot = ConfirmSlot()
+    manager = AsyncMock(is_active=False)
+    disp = ActionDispatcherProcessor(
+        slot, set_baseline=AsyncMock(), counting_manager=manager
+    )
+    await _drive(
+        disp,
+        [CoachActionFrame(action=SetBaselineAction(entries=[{"exercise": "스쿼트", "value": 20}]))],
+    )
+    manager.start.assert_not_called()
 
 
 async def test_text_frames_pass_through() -> None:
