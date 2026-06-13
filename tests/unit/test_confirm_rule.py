@@ -166,15 +166,19 @@ async def test_accept_plan_emits_commit_and_arms_dispatcher() -> None:
     assert "목표" in ack.text
 
 
-async def test_accept_plan_adjustment_uses_adjust_ack() -> None:
+async def test_accept_plan_adjustment_emits_action_without_premature_ack() -> None:
+    """조정 확답은 액션만 발행하고 commit 가드를 켜되, **확정 ack 는 말하지 않는다** —
+    실제 적용 결과(활성 플랜 유무)는 commit 콜백 follow-up 이 안내한다(D-2 후속)."""
     slot = ConfirmSlot()
     slot.set_plan(ProposePlanAdjustmentAction(exercise="푸시업", new_target_count=2))
     dispatcher = ActionDispatcherProcessor(slot)
     frames = await _send_with_dispatcher("응", slot, dispatcher)
     actions = [f for f in frames if isinstance(f, CoachActionFrame)]
     assert isinstance(actions[0].action, ProposePlanAdjustmentAction)
-    ack = next(f for f in frames if type(f) is TextFrame)
-    assert "조정" in ack.text
+    assert dispatcher._allow_plan_commit is True  # noqa: SLF001
+    assert not slot.has_pending_plan
+    # 미리 "조정할게요" 류 확정 ack 를 말하지 않는다.
+    assert [f for f in frames if type(f) is TextFrame] == []
 
 
 async def test_reject_plan_clears_pending() -> None:

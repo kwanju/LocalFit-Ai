@@ -58,6 +58,8 @@ from app.pipecat_services.processors.ui_text_broadcast import UITextBroadcastPro
 from app.pipecat_services.service_factory import build_stt_service, build_tts_service
 from app.prompts.coaching import (
     COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
+    PLAN_ADJUST_DONE_FOLLOW_UP_MESSAGE,
+    PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE,
     PROACTIVE_OPENER_USER_MESSAGE,
 )
 
@@ -185,14 +187,30 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         async with create_db_session() as db:
             repo = PlanRepository(db)
             plan = await repo.get_active()
-            if plan is None or plan.id is None:
-                logger.warning("plan adjustment skipped: no active plan")
-                return
-            await repo.adjust_goal(plan.id, action.exercise, action.new_target_count)
-        logger.info(
-            "plan adjusted: exercise={} new_target={}",
-            action.exercise, action.new_target_count,
-        )
+            applied = False
+            if plan is not None and plan.id is not None:
+                goal = await repo.adjust_goal(
+                    plan.id, action.exercise, action.new_target_count
+                )
+                applied = goal is not None
+        # 무동작이면 사용자가 "조정됐다"고 오인하므로, 결과에 맞는 follow-up 을 코치가
+        # 안내하게 한다(활성 플랜·해당 종목 목표가 없으면 먼저 목표 설정 권유).
+        if applied:
+            logger.info(
+                "plan adjusted: exercise={} new_target={}",
+                action.exercise, action.new_target_count,
+            )
+            await worker.queue_frame(
+                InputTextRawFrame(text=PLAN_ADJUST_DONE_FOLLOW_UP_MESSAGE)
+            )
+        else:
+            logger.warning(
+                "plan adjustment not applied (no active plan/goal): exercise={}",
+                action.exercise,
+            )
+            await worker.queue_frame(
+                InputTextRawFrame(text=PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE)
+            )
 
     safety = SafetyGuardProcessor(
         counting_manager=counting_manager,

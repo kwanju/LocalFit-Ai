@@ -54,8 +54,10 @@ _REJECT_KEYWORDS: frozenset[str] = frozenset(
 
 _TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 _ACK_TEXT: str = "시작할게요."
+# 플랜 생성은 항상 성공하므로 즉시 확정 ack 를 말한다. 조정(adjustment)은 활성 플랜이
+# 없으면 적용 못 하므로 여기서 확정 ack 를 말하지 않고, commit 콜백이 실제 결과에 따라
+# LLM follow-up 으로 안내한다(무동작 시 사용자 오인 방지, ADR-024 코드리뷰 D-2 후속).
 _PLAN_ACK_TEXT: str = "이번 주 목표로 등록할게요."
-_PLAN_ADJUST_ACK_TEXT: str = "목표를 조정할게요."
 
 
 class ConfirmRuleProcessor(FrameProcessor):
@@ -130,10 +132,12 @@ class ConfirmRuleProcessor(FrameProcessor):
                             self._dispatcher, "allow_one_plan_commit"
                         ):
                             self._dispatcher.allow_one_plan_commit()
-                        ack = _PLAN_ADJUST_ACK_TEXT if is_adjust else _PLAN_ACK_TEXT
                         await self.push_frame(LLMFullResponseStartFrame(), direction)
                         await self.push_frame(CoachActionFrame(action=plan), direction)
-                        await self.push_frame(TextFrame(text=ack), direction)
+                        # 조정은 확정 ack 를 말하지 않는다 — commit 결과(활성 플랜 유무)에
+                        # 따라 콜백이 follow-up 으로 안내한다. 생성은 항상 성공이라 즉시 ack.
+                        if not is_adjust:
+                            await self.push_frame(TextFrame(text=_PLAN_ACK_TEXT), direction)
                         await self.push_frame(LLMFullResponseEndFrame(), direction)
                         return
                 if kind == "reject":

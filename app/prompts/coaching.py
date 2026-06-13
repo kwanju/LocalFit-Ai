@@ -75,3 +75,13 @@ COUNTING_COMPLETE_FOLLOW_UP_MESSAGE: str = (
     "(계획한 세트를 모두 끝냈습니다. 사용자에게 다음 운동을 제안하거나 "
     "오늘 세션 종료를 권하세요. 새 운동을 제안할 때는 propose_set 으로 sets/rest_sec 까지 묶어서. 120자 이내.)"
 )
+
+# ADR-024: 주간 목표 조정의 결과를 commit 콜백이 LLM follow-up 으로 안내한다(무동작 금지).
+PLAN_ADJUST_DONE_FOLLOW_UP_MESSAGE: str = (
+    "(주간 목표를 사용자 요청대로 조정했습니다. 사용자에게 짧게 확인만 해 주세요. "
+    "운동을 새로 시작하지는 마세요. 40자 이내.)"
+)
+PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE: str = (
+    "(아직 등록된 주간 목표가 없어 조정할 수 없습니다. 사용자에게 먼저 이번 주 목표부터 "
+    "정해보라고 짧게 권하세요. 40자 이내.)"
+)
