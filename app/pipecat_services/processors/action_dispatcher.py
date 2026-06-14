@@ -21,6 +21,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.core.coach_response import (
     LogConditionAction,
+    ProposeCalendarSyncAction,
     ProposePlanAction,
     ProposePlanAdjustmentAction,
     ProposeSetAction,
@@ -40,6 +41,7 @@ RememberFactFn = Callable[[RememberFactAction], Awaitable[None]]
 CommitPlanFn = Callable[[ProposePlanAction], Awaitable[None]]
 CommitPlanAdjustmentFn = Callable[[ProposePlanAdjustmentAction], Awaitable[None]]
 SetBaselineFn = Callable[[SetBaselineAction], Awaitable[None]]
+CommitCalendarSyncFn = Callable[[ProposeCalendarSyncAction], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
@@ -52,6 +54,11 @@ class ActionDispatcherProcessor(FrameProcessor):
         (ADR-024). 한 번 쓰면 리셋 — 확답 없는 LLM 플랜 발행은 절대 저장 안 됨."""
         self._allow_plan_commit = True
 
+    def allow_one_calendar_commit(self) -> None:
+        """ConfirmRule이 캘린더 등록 제안에 대한 사용자 확답을 받아 등록을 트리거할 때
+        호출 (ADR-022). 한 번 쓰면 리셋 — 확답 없는 LLM 발행은 절대 등록 안 됨."""
+        self._allow_calendar_commit = True
+
     def __init__(
         self,
         slot: ConfirmSlot,
@@ -63,6 +70,7 @@ class ActionDispatcherProcessor(FrameProcessor):
         commit_plan: CommitPlanFn | None = None,
         commit_plan_adjustment: CommitPlanAdjustmentFn | None = None,
         set_baseline: SetBaselineFn | None = None,
+        commit_calendar_sync: CommitCalendarSyncFn | None = None,
         counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
@@ -74,12 +82,15 @@ class ActionDispatcherProcessor(FrameProcessor):
         self._commit_plan = commit_plan
         self._commit_plan_adjustment = commit_plan_adjustment
         self._set_baseline = set_baseline
+        self._commit_calendar_sync = commit_calendar_sync
         self._counting_manager = counting_manager
         # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
         # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
         self._allow_direct_start: bool = False
         # 플랜 commit 가드 (ADR-024) — 확답 없는 플랜 변경 금지.
         self._allow_plan_commit: bool = False
+        # 캘린더 등록 가드 (ADR-022) — 확답 없는 등록 금지.
+        self._allow_calendar_commit: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -246,6 +257,23 @@ class ActionDispatcherProcessor(FrameProcessor):
                     await self._commit_plan_adjustment(action)
                 except Exception as e:  # noqa: BLE001
                     logger.error("commit_plan_adjustment dispatch failed: {}", e)
+            return
+
+        if isinstance(action, ProposeCalendarSyncAction):
+            # 확답 게이트 (ADR-022 §9-2): 사용자 확답 없이는 캘린더에 등록하지 않는다.
+            # LLM 발행은 제안 슬롯에만 들어가고, 실제 등록은 ConfirmRule 이 확답을 받아
+            # allow_one_calendar_commit() 를 켠 뒤 같은 액션을 재발행할 때만 일어난다.
+            if not self._allow_calendar_commit:
+                self._slot.set_calendar(action)
+                logger.info("dispatch propose_calendar_sync (pending, 확답 대기)")
+                return
+            self._allow_calendar_commit = False
+            logger.info("dispatch commit_calendar_sync")
+            if self._commit_calendar_sync is not None:
+                try:
+                    await self._commit_calendar_sync(action)
+                except Exception as e:  # noqa: BLE001 — logged, never break pipeline
+                    logger.error("commit_calendar_sync dispatch failed: {}", e)
             return
 
         logger.warning("dispatch: unknown action type {}", type(action).__name__)

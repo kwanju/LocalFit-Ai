@@ -73,3 +73,12 @@ coach:
   instructor:
     max_retries: 2                  # instructor JSON 재시도 횟수 (ADR-013)
     mode: "json"                    # instructor.Mode.JSON (Ollama OpenAI-compat)
+
+google_calendar:                    # Google Calendar 연동 (ADR-022) — 캘린더 한정 로컬-only 완화
+  enabled: true
+  credentials_path: "google_client_secret.json"  # OAuth Desktop client (Google Cloud Console 발급)
+  calendar_id: "primary"            # 본인 기본 캘린더 (단일 사용자, ADR-002)
+  event_duration_min: 30            # 등록할 운동 이벤트 길이(분)
+  workout_summary: "운동 (LocalFit)"  # 등록 이벤트 제목 — 읽기 필터 마커 겸용
+  gap_day_end: "22:00"              # 틈새 추천 계산의 하루 끝
+  gap_min_minutes: 30               # 이 분 이상 비어야 "틈새"로 추천

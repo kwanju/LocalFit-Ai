@@ -103,11 +103,20 @@ def _recent_sessions_summary(sessions) -> str:
 
 @dataclass
 class CalendarSignals:
-    """Phase-8 hook — wired up by ``app.core.calendar_metrics`` later."""
+    """Calendar-derived signals injected into the coach context.
 
-    weekly_pattern: str | None = None       # e.g. "월·수·금 주 3회"
-    last_exercise: dict[str, str] | None = None  # e.g. {"푸시업": "5일 전"}
-    rest_streak_days: int = 0
+    ``weekly_pattern`` / ``last_exercise`` / ``rest_streak_days`` come from the
+    LOCAL ADR-020 workout heatmap (``app.core.calendar_metrics``). ``free_gap_hint``
+    comes from a DIFFERENT source — the external Google Calendar free/busy read
+    (ADR-022 §9-3) — and is kept as a **separate field** so the two are never
+    conflated (phase-9 명세 §9-3).
+    """
+
+    weekly_pattern: str | None = None       # e.g. "월·수·금 주 3회"  (ADR-020 히트맵)
+    last_exercise: dict[str, str] | None = None  # e.g. {"푸시업": "5일 전"}  (ADR-020)
+    rest_streak_days: int = 0               # (ADR-020 히트맵)
+    # ADR-022 gcal 틈새. e.g. "지금부터 저녁 8시까지 비어 있어요"
+    free_gap_hint: str | None = None
 
 
 _MAX_RECENT_FACTS: int = 5
@@ -175,6 +184,9 @@ class CoachContextBuilder:
             parts.append(f"운동별 마지막: {last_str}")
         if signals.rest_streak_days >= 2:
             parts.append(f"휴식 streak {signals.rest_streak_days}일")
+        # ADR-022 §9-3: 외부 Google Calendar 틈새 — 히트맵 신호와 별도 필드(혼동 방지).
+        if signals.free_gap_hint:
+            parts.append(f"오늘 빈 시간: {signals.free_gap_hint}")
         parts.append(f"현재 {_time_of_day(now)} {now.hour}시")
         # 2층 자유텍스트 메모 — 마지막에 배치해 cap 초과 시 가장 먼저 잘리게 한다.
         memo = await self._recent_memo()

@@ -59,6 +59,8 @@ from app.pipecat_services.processors.ui_control import UIControlProcessor
 from app.pipecat_services.processors.ui_text_broadcast import UITextBroadcastProcessor
 from app.pipecat_services.service_factory import build_stt_service, build_tts_service
 from app.prompts.coaching import (
+    CALENDAR_SYNC_DONE_FOLLOW_UP_MESSAGE,
+    CALENDAR_SYNC_NONE_FOLLOW_UP_MESSAGE,
     COUNTING_COMPLETE_FOLLOW_UP_MESSAGE,
     FIRST_SESSION_OPENER_USER_MESSAGE,
     PLAN_ADJUST_DONE_FOLLOW_UP_MESSAGE,
@@ -147,7 +149,9 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     context_adapter: DBCoachContextAdapter | None = None
     if config is not None:
         weeks = getattr(config.coach, "calendar_pattern_weeks", 4)
-        context_adapter = DBCoachContextAdapter(calendar_pattern_weeks=weeks)
+        context_adapter = DBCoachContextAdapter(
+            calendar_pattern_weeks=weeks, gcal_config=config.google_calendar
+        )
 
     llm_processor = (
         StructuredOllamaProcessor(config, context_adapter) if config else None  # type: ignore[arg-type]
@@ -245,6 +249,31 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
                 InputTextRawFrame(text=PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE)
             )
 
+    # ADR-022 §9-2 캘린더 등록 — **확답 게이트 통과 후에만** 디스패처가 호출한다(자동
+    # 등록 X). 미연동/오프라인이면 created=0 으로 degrade 하고 코칭은 계속(안 행복한 경로).
+    async def _commit_calendar_sync(action) -> None:
+        created = 0
+        if config is not None and config.google_calendar.enabled:
+            try:
+                from app.pipecat_services.calendar_sync import CalendarSyncService
+
+                result = await CalendarSyncService(config.google_calendar).register_plan_events()
+                created = result.created
+            except Exception as e:  # noqa: BLE001 — 등록 실패는 안내로 흡수, 코칭 영향 X
+                logger.error("calendar register failed: {}", e)
+        if created > 0:
+            logger.info("calendar sync committed: {} events", created)
+            await worker.queue_frame(
+                InputTextRawFrame(
+                    text=CALENDAR_SYNC_DONE_FOLLOW_UP_MESSAGE.format(count=created)
+                )
+            )
+        else:
+            logger.warning("calendar sync committed nothing (no plan or not connected)")
+            await worker.queue_frame(
+                InputTextRawFrame(text=CALENDAR_SYNC_NONE_FOLLOW_UP_MESSAGE)
+            )
+
     safety = SafetyGuardProcessor(
         counting_manager=counting_manager,
         record_constraint=_record_constraint,
@@ -258,6 +287,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         commit_plan=_commit_plan,
         commit_plan_adjustment=_commit_plan_adjustment,
         set_baseline=_set_baseline,
+        commit_calendar_sync=_commit_calendar_sync,
     )
     confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 

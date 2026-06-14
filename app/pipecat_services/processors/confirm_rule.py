@@ -140,6 +140,22 @@ class ConfirmRuleProcessor(FrameProcessor):
                             await self.push_frame(TextFrame(text=_PLAN_ACK_TEXT), direction)
                         await self.push_frame(LLMFullResponseEndFrame(), direction)
                         return
+                # 캘린더 등록 확답 (ADR-022 §9-2): 확답 시에만 등록을 트리거한다. 같은
+                # 액션을 재발행하되 dispatcher 의 calendar-commit 가드를 한 번 풀어준다.
+                if kind == "accept" and self._slot.has_pending_calendar:
+                    cal = self._slot.take_calendar()
+                    if cal is not None:
+                        logger.info("ConfirmRuleProcessor: accept → register calendar events")
+                        if self._dispatcher is not None and hasattr(
+                            self._dispatcher, "allow_one_calendar_commit"
+                        ):
+                            self._dispatcher.allow_one_calendar_commit()
+                        await self.push_frame(LLMFullResponseStartFrame(), direction)
+                        await self.push_frame(CoachActionFrame(action=cal), direction)
+                        # 등록 결과(성공 수/미연동)는 commit 콜백이 follow-up 으로 안내한다
+                        # — 여기서 확정 ack 를 말하지 않는다(미연동 시 사용자 오인 방지).
+                        await self.push_frame(LLMFullResponseEndFrame(), direction)
+                        return
                 if kind == "reject":
                     logger.info("ConfirmRuleProcessor: reject → clear pending proposal")
                     self._slot.clear()

@@ -16,6 +16,7 @@ from app.api import (
     admin,
     calendar,
     condition,
+    gcal,
     health,
     lifecycle,
     onboarding,
@@ -111,6 +112,7 @@ app.include_router(session.router)
 app.include_router(routine.router)
 app.include_router(onboarding.router)
 app.include_router(calendar.router)
+app.include_router(gcal.router)
 app.include_router(condition.router)
 app.include_router(admin.router)
 app.include_router(lifecycle.router)

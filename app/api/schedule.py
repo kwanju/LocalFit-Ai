@@ -6,10 +6,12 @@ toast 와 폴링 타이머는 Tauri 셸의 웹뷰(항상 상주)가 담당하고
 계산해 돌려준다. 클릭→세션 라우팅은 사용자가 앱을 여는 경로(트레이/창)에서 pending 을
 확인해 진입한다(Windows 데스크탑 toast 는 클릭 라우팅 미지원 — phase 명세 8-3 결정).
 
-스케줄 소스 우선순위(ADR-022/027 fallback):
-- 활성 주간 플랜(ADR-024)이 있으면 **오늘 요일에 미완료 PlanDay 가 있을 때만** 운동 알림.
-- 플랜이 없으면 **매일**(로컬 fallback) 운동 알림.
-- 운동 시각 = ``UserProfile.available_times`` (있으면) 아니면 설정의 ``workout_time``.
+스케줄 소스 우선순위(ADR-022/027 — 캘린더 우선, 로컬 fallback):
+- **Google Calendar 연동 시(§9-4)**: 오늘 캘린더에 잡힌 운동 이벤트의 시작 시각을 운동
+  알림 슬롯으로 쓴다(캘린더가 source of truth). 미연동/오프라인이면 아래 로컬로 fallback.
+- 로컬 fallback: 활성 주간 플랜(ADR-024)이 있으면 **오늘 요일에 미완료 PlanDay 가
+  있을 때만** 운동 알림, 플랜이 없으면 **매일** 운동 알림.
+- 로컬 운동 시각 = ``UserProfile.available_times`` (있으면) 아니면 설정의 ``workout_time``.
 - 체크인 알림 = 설정 ``checkin_enabled`` 시 ``checkin_time`` (ADR-023).
 
 상태(발생/확인 키)는 단일 사용자·단일 프로세스라 인메모리로 둔다(ADR-002). 키에 날짜가
@@ -92,19 +94,43 @@ async def _is_workout_day(session: AsyncSession, today_weekday: int) -> bool:
     return any(d.weekday == today_weekday and not d.completed for d in days)
 
 
-async def _build_today_slots(
-    session: AsyncSession, settings, now: datetime
-) -> list[ScheduleSlot]:
-    profile = await UserProfileRepository(session).get()
-    times = _parse_times(profile.available_times) if profile is not None else []
-    if not times:
-        default_time = parse_hhmm(settings.workout_time)
-        times = [default_time] if default_time is not None else []
+async def _calendar_workout_times(request: Request, now: datetime) -> list | None:
+    """연동된 Google Calendar 의 오늘 운동 이벤트 시작 시각(§9-4). 미연동/오프라인이면
+    None → 호출부가 로컬 스케줄 fallback 으로 degrade(ADR-022 안 행복한 경로)."""
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is None or not cfg.google_calendar.enabled:
+        return None
+    try:
+        from app.pipecat_services.calendar_sync import CalendarSyncService
 
+        return await CalendarSyncService(cfg.google_calendar).today_workout_times(now)
+    except Exception as e:  # noqa: BLE001 — 캘린더 경로 실패는 로컬 fallback 으로 흡수
+        from loguru import logger
+
+        logger.error("calendar scheduler source failed (local fallback): {}", e)
+        return None
+
+
+async def _build_today_slots(
+    request: Request, session: AsyncSession, settings, now: datetime
+) -> list[ScheduleSlot]:
     slots: list[ScheduleSlot] = []
-    if times and await _is_workout_day(session, now.weekday()):
-        for t in times:
+
+    # 캘린더 우선(§9-4): 연동돼 있으면 캘린더에 잡힌 운동 이벤트 시각을 운동 슬롯으로 쓴다.
+    # 미연동이면 None → 아래 로컬 플랜/프로필 기반 fallback.
+    cal_times = await _calendar_workout_times(request, now)
+    if cal_times is not None:
+        for t in cal_times:
             slots.append(ScheduleSlot(KIND_WORKOUT, t, _WORKOUT_TITLE, _WORKOUT_BODY))
+    else:
+        profile = await UserProfileRepository(session).get()
+        times = _parse_times(profile.available_times) if profile is not None else []
+        if not times:
+            default_time = parse_hhmm(settings.workout_time)
+            times = [default_time] if default_time is not None else []
+        if times and await _is_workout_day(session, now.weekday()):
+            for t in times:
+                slots.append(ScheduleSlot(KIND_WORKOUT, t, _WORKOUT_TITLE, _WORKOUT_BODY))
 
     if settings.checkin_enabled:
         checkin_at = parse_hhmm(settings.checkin_time)
@@ -142,7 +168,7 @@ async def get_due(
         return []
 
     now = datetime.now()  # 로컬 wall-clock — "오후 6시"는 사용자 머신 시간(ADR-002)
-    slots = await _build_today_slots(session, settings, now)
+    slots = await _build_today_slots(request, session, settings, now)
     due = compute_due(
         now,
         slots,
@@ -169,7 +195,7 @@ async def get_pending(
         return []
 
     now = datetime.now()
-    slots = await _build_today_slots(session, settings, now)
+    slots = await _build_today_slots(request, session, settings, now)
     items = pending(now, slots, lead_minutes=settings.lead_minutes, acked_keys=_acked_keys)
     return [_to_out(r) for r in items]
 
@@ -190,7 +216,7 @@ async def ack(
     cfg = _notif_config(request)
     settings = await NotificationSettingsRepository(session).get_or_create(cfg)
     now = datetime.now()
-    slots = await _build_today_slots(session, settings, now)
+    slots = await _build_today_slots(request, session, settings, now)
     keys = [
         r.key
         for r in pending(now, slots, lead_minutes=settings.lead_minutes, acked_keys=_acked_keys)

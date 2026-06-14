@@ -8,6 +8,7 @@ from pipecat.tests.utils import run_test
 from pipecat.utils.time import time_now_iso8601
 
 from app.core.coach_response import (
+    ProposeCalendarSyncAction,
     ProposePlanAction,
     ProposePlanAdjustmentAction,
     ProposeSetAction,
@@ -179,6 +180,30 @@ async def test_accept_plan_adjustment_emits_action_without_premature_ack() -> No
     assert not slot.has_pending_plan
     # 미리 "조정할게요" 류 확정 ack 를 말하지 않는다.
     assert [f for f in frames if type(f) is TextFrame] == []
+
+
+async def test_accept_calendar_sync_emits_action_and_arms_dispatcher() -> None:
+    """캘린더 등록 제안에 확답하면 같은 액션을 재발행하고 calendar-commit 가드를 켠다
+    (ADR-022 §9-2). 등록 결과는 commit 콜백 follow-up 이 안내하므로 확정 ack 는 없다."""
+    slot = ConfirmSlot()
+    slot.set_calendar(ProposeCalendarSyncAction())
+    dispatcher = ActionDispatcherProcessor(slot)
+    frames = await _send_with_dispatcher("좋아요", slot, dispatcher)
+    actions = [f for f in frames if isinstance(f, CoachActionFrame)]
+    assert len(actions) == 1
+    assert isinstance(actions[0].action, ProposeCalendarSyncAction)
+    assert dispatcher._allow_calendar_commit is True  # noqa: SLF001
+    assert not slot.has_pending_calendar
+    # 미연동 시 오인 방지 — 여기서 확정 ack 를 말하지 않는다.
+    assert [f for f in frames if type(f) is TextFrame] == []
+
+
+async def test_reject_calendar_sync_clears_pending() -> None:
+    slot = ConfirmSlot()
+    slot.set_calendar(ProposeCalendarSyncAction())
+    frames = await _send("아니요", slot)
+    assert [f for f in frames if isinstance(f, CoachActionFrame)] == []
+    assert not slot.has_pending_calendar
 
 
 async def test_reject_plan_clears_pending() -> None:

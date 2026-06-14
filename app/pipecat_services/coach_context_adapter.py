@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.config import GoogleCalendarConfig
 from app.core.calendar_metrics import (
     compute_last_exercise_dates,
     compute_weekly_pattern,
@@ -39,12 +40,18 @@ class DBCoachContextAdapter:
     by ``StructuredOllamaProcessor``, backed by a fresh DB session per call.
     """
 
-    def __init__(self, *, calendar_pattern_weeks: int = 4) -> None:
+    def __init__(
+        self, *, calendar_pattern_weeks: int = 4, gcal_config: GoogleCalendarConfig | None = None
+    ) -> None:
         self._weeks = calendar_pattern_weeks
+        self._gcal_config = gcal_config
 
     async def build(self, *, recent_sessions: int = 5, now: datetime | None = None) -> str:
         async with create_db_session() as db:
             signals = await self._fetch_calendar_signals(db)
+            # ADR-022 §9-3: 외부 Google Calendar 틈새 힌트(연동 시에만). 별도 소스라
+            # 히트맵 신호와 분리해 채운다. 미연동/오프라인/실패면 None 으로 degrade.
+            signals.free_gap_hint = await self._fetch_gap_hint(now)
 
             async def _get_signals() -> CalendarSignals:
                 return signals
@@ -60,6 +67,18 @@ class DBCoachContextAdapter:
                 plan_repo=PlanRepository(db),
             )
             return await builder.build(recent_sessions=recent_sessions, now=now)
+
+    async def _fetch_gap_hint(self, now: datetime | None) -> str | None:
+        """Google Calendar 오늘 빈 시간 힌트(ADR-022 §9-3). 비연동/실패면 None."""
+        if self._gcal_config is None or not self._gcal_config.enabled:
+            return None
+        try:
+            from app.pipecat_services.calendar_sync import CalendarSyncService
+
+            return await CalendarSyncService(self._gcal_config).today_gap_hint(now)
+        except Exception as e:  # noqa: BLE001 — 틈새 힌트는 best-effort
+            logger.warning("calendar gap hint failed: {}", e)
+            return None
 
     async def _fetch_calendar_signals(self, db: AsyncSession) -> CalendarSignals:
         today = date.today()

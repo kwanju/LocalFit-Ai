@@ -107,6 +107,16 @@ class SetBaselineAction(BaseModel):
     note: str | None = None
 
 
+class ProposeCalendarSyncAction(BaseModel):
+    """이번 주 플랜을 Google Calendar 에 등록할지 제안 (ADR-022 §9-2). **확답 게이트
+    통과 후에만** 실제 등록된다 — LLM 이 발행해도 곧바로 쓰지 않고 제안 슬롯에 들어간다
+    (자동 등록 금지, 회고 ConfirmRule 정신). 페이로드가 없는 건 등록 대상이 활성 주간
+    플랜(ADR-024)으로 고정이기 때문 — 코치는 "캘린더에 등록할까요?" 만 청한다."""
+
+    type: Literal["propose_calendar_sync"] = "propose_calendar_sync"
+    note: str | None = None
+
+
 CoachAction = Annotated[
     ProposeSetAction
     | StartCountingAction
@@ -115,7 +125,8 @@ CoachAction = Annotated[
     | RememberFactAction
     | ProposePlanAction
     | ProposePlanAdjustmentAction
-    | SetBaselineAction,
+    | SetBaselineAction
+    | ProposeCalendarSyncAction,
     Field(discriminator="type"),
 ]
 

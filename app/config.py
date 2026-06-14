@@ -105,6 +105,25 @@ class NotificationsConfig(BaseModel):
     catchup_minutes: int = 30         # 놓친 알림 따라잡기 창 — config 전용
 
 
+class GoogleCalendarConfig(BaseModel):
+    """Google Calendar 연동 (ADR-022). 로컬-only(ADR-002)의 캘린더 한정 완화 — 본인
+    계정 1개. 토큰은 평문 파일이 아니라 OS 자격증명 저장소(keyring)에 둔다(ADR-022 부정
+    항목). 미연동/오프라인이면 모든 캘린더 기능은 graceful degrade 하고 로컬 스케줄·
+    코칭은 계속된다(ADR-022 안 행복한 경로).
+
+    ``credentials_path`` = 사용자가 Google Cloud Console 에서 발급한 OAuth Desktop
+    client secret JSON 경로. 없으면 연동 자체가 비활성(연결 시도 시 안내).
+    """
+
+    enabled: bool = True
+    credentials_path: str = "google_client_secret.json"  # OAuth Desktop client (사용자 발급)
+    calendar_id: str = "primary"        # 단일 사용자 본인 기본 캘린더(ADR-002)
+    event_duration_min: int = 30        # 등록할 운동 이벤트 기본 길이(분)
+    workout_summary: str = "운동 (LocalFit)"  # 등록 이벤트 제목 — 읽기 필터 마커 겸용
+    gap_day_end: str = "22:00"          # 틈새 추천 계산의 하루 끝(이후는 비는 시간 안 봄)
+    gap_min_minutes: int = 30           # 이 분 이상 비어야 "틈새"로 추천
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig
     stt: STTConfig
@@ -114,6 +133,7 @@ class AppConfig(BaseModel):
     counting: CountingConfig
     coach: CoachConfig = CoachConfig()
     notifications: NotificationsConfig = NotificationsConfig()
+    google_calendar: GoogleCalendarConfig = GoogleCalendarConfig()
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:

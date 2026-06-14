@@ -9,6 +9,7 @@ from pipecat.tests.utils import run_test
 
 from app.core.coach_response import (
     LogConditionAction,
+    ProposeCalendarSyncAction,
     ProposePlanAction,
     ProposePlanAdjustmentAction,
     ProposeSetAction,
@@ -215,3 +216,28 @@ async def test_allow_plan_commit_resets_after_one_use() -> None:
     await _drive(disp, [CoachActionFrame(action=a2)])
     commit.assert_awaited_once()          # 첫 번째만 commit
     assert slot.pending_plan == a2        # 두 번째는 다시 보류
+
+
+async def test_calendar_sync_without_confirm_does_not_register() -> None:
+    """회귀 가드 (ADR-022 §9-2): 확답 없이 LLM 이 propose_calendar_sync 를 내면 **등록
+    안 함** — 제안 슬롯에만 들어가야 한다(자동 등록 금지)."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_calendar_sync=commit)
+    action = ProposeCalendarSyncAction()
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_not_awaited()              # 등록 금지
+    assert slot.has_pending_calendar         # 제안만 보류
+    assert slot.pending_calendar == action
+
+
+async def test_calendar_sync_commits_only_after_allow() -> None:
+    """확답(ConfirmRule)이 allow_one_calendar_commit() 를 켠 뒤에만 등록 콜백이 호출된다."""
+    slot = ConfirmSlot()
+    commit = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, commit_calendar_sync=commit)
+    disp.allow_one_calendar_commit()  # 사용자 확답 시뮬레이트
+    action = ProposeCalendarSyncAction()
+    await _drive(disp, [CoachActionFrame(action=action)])
+    commit.assert_awaited_once()
+    assert not slot.has_pending_calendar
