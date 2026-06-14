@@ -18,6 +18,11 @@ from loguru import logger
 
 router = APIRouter(tags=["lifecycle"])
 
+# Strong refs to background prewarm tasks — asyncio only keeps weak refs, so an
+# unreferenced task can be GC'd mid-load. Discard on completion (single user, so
+# this holds at most one).
+_PREWARM_TASKS: set[asyncio.Task] = set()
+
 
 @router.post("/prewarm")
 async def prewarm(request: Request) -> dict:
@@ -35,5 +40,7 @@ async def prewarm(request: Request) -> dict:
         except Exception as e:  # noqa: BLE001 — prewarm is best-effort; 세션 시작 retries
             logger.warning("prewarm load failed (session start will retry): {}", e)
 
-    asyncio.create_task(_bg_load())
+    task = asyncio.create_task(_bg_load())
+    _PREWARM_TASKS.add(task)
+    task.add_done_callback(_PREWARM_TASKS.discard)
     return {"status": "loading"}

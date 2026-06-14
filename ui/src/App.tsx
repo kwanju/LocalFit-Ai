@@ -6,21 +6,23 @@ import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
 import { Calendar } from "@/screens/Calendar";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
+import { listen } from "@tauri-apps/api/event";
 import { prewarmModels } from "@/api/client";
 import { inTauri } from "@/api/tauri";
 
-// ADR-030 (b): app-open prewarm. When the desktop app opens/refocuses (e.g.
-// reopened from the tray) start loading models so 세션 시작 is fast. This is the
-// only allowed preload trigger — user intent (app open), never a background
-// scheduler (which would fight a running game for VRAM). Browser dev is exempt
-// so casual page loads don't pin VRAM. Best-effort: ignore failures.
+// ADR-030 (b): app-open prewarm. Start loading models on real app-open intent so
+// 세션 시작 is fast — the only allowed preload trigger (never a background
+// scheduler, which would fight a running game for VRAM). Intent = first launch
+// (mount) + reopening from the tray (the Rust shell emits "app-shown"). We do NOT
+// prewarm on every window focus, so alt-tabbing back during a game doesn't pin
+// VRAM. Browser dev is exempt. Best-effort: ignore failures.
 function usePrewarmOnOpen() {
   useEffect(() => {
     if (!inTauri()) return;
     const fire = () => void prewarmModels().catch(() => {});
-    fire();
-    window.addEventListener("focus", fire);
-    return () => window.removeEventListener("focus", fire);
+    fire(); // first launch
+    const unlisten = listen("app-shown", fire); // tray reopen
+    return () => void unlisten.then((off) => off());
   }, []);
 }
 

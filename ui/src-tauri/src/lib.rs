@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, RunEvent, WindowEvent,
+    Emitter, Manager, RunEvent, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
 
@@ -176,7 +176,13 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show_main_window(app),
+                    "open" => {
+                        show_main_window(app);
+                        // ADR-030 (b): reopening from the tray = user intent → tell
+                        // the webview to prewarm models (it gates on this event, not
+                        // every window focus, so alt-tab doesn't pin VRAM).
+                        let _ = app.emit("app-shown", ());
+                    }
                     "quit" => {
                         if let Some(state) = app.try_state::<Backend>() {
                             if let Some(mut child) = state.0.lock().unwrap().take() {
