@@ -30,8 +30,23 @@ async def _probe(name: str, adapter: object | None) -> tuple[str, bool]:
 
 @router.get("/health")
 async def health(request: Request) -> dict:
-    state = request.app.state
-    probes = [_probe(name, getattr(state, name, None)) for name in _ADAPTER_NAMES]
-    adapters = dict(await asyncio.gather(*probes))
-    status = "ok" if all(adapters.values()) else "degraded"
-    return {"status": status, "backend": True, "pipecat": _PIPECAT_OK, "adapters": adapters}
+    """Backend liveness + current model load state (ADR-030 redefined semantics).
+
+    ``adapters`` no longer means "resident" — under on-demand lifecycle they are
+    all false while idle and true only during a loaded session. ``status`` is
+    "ok" whenever the backend responds; the UI keys off reachability, not the
+    adapter flags. ``models_loaded`` exposes the ModelManager state.
+    """
+    manager = getattr(request.app.state, "models", None)
+    loaded = bool(manager is not None and manager.loaded)
+    adapters = dict.fromkeys(_ADAPTER_NAMES, False)
+    if loaded:
+        probes = [_probe(name, getattr(manager, name, None)) for name in _ADAPTER_NAMES]
+        adapters = dict(await asyncio.gather(*probes))
+    return {
+        "status": "ok",
+        "backend": True,
+        "pipecat": _PIPECAT_OK,
+        "models_loaded": loaded,
+        "adapters": adapters,
+    }

@@ -58,6 +58,13 @@ export function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>("/health");
 }
 
+// ADR-030 (b): app-open prewarm. Called when the Tauri app opens/focuses (user
+// intent) so models start loading before 세션 시작, cutting cold start. Best-effort
+// — failures are swallowed by the caller; 세션 시작 retries and surfaces VRAM 안내.
+export function prewarmModels(): Promise<{ status: string }> {
+  return request<{ status: string }>("/prewarm", { method: "POST" });
+}
+
 export function getOnboarding(): Promise<OnboardingStatus> {
   return request<OnboardingStatus>("/onboarding");
 }

@@ -49,6 +49,9 @@ export interface SessionStore {
   mode: SessionMode;
   sessionId: number | null;
   started: boolean;
+  // ADR-030: true while the backend loads models on session start (cold start).
+  // Cleared once session_started (or an error) arrives. Drives "코치 준비 중" UX.
+  preparing: boolean;
   messages: ChatEntry[];
   counting: CountingState;
   error: string | null;
@@ -85,6 +88,7 @@ const initialStore: SessionStore = {
   mode: "c2c",
   sessionId: null,
   started: false,
+  preparing: false,
   messages: [],
   counting: INITIAL_COUNTING,
   error: null,
@@ -118,10 +122,15 @@ function pushEntry(messages: ChatEntry[], entry: Omit<ChatEntry, "id">): ChatEnt
 
 function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
   switch (msg.type) {
+    case "coach_preparing":
+      // 모델 콜드스타트 동안 표시 (ADR-030). session_started 가 오면 해제.
+      return { ...store, preparing: true };
+
     case "session_started":
       return {
         ...store,
         started: true,
+        preparing: false,
         sessionId: msg.session_id,
         mode: msg.mode,
         error: null,
@@ -198,6 +207,8 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
     case "error":
       return {
         ...store,
+        // 로드 실패(VRAM 부족 등)면 준비중 표시를 풀어 안내 메시지를 보이게 한다.
+        preparing: false,
         error: msg.message,
         messages: pushEntry(store.messages, { role: "system", text: msg.message }),
       };
@@ -206,6 +217,7 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
       return {
         ...store,
         started: false,
+        preparing: false,
         serverState: null,
         counting: INITIAL_COUNTING,
         pendingBeatMeta: [],

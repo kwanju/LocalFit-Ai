@@ -5,15 +5,25 @@ that adapter unavailable (reported by /health) instead of crashing startup.
 
 import logging
 import logging.handlers
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.api import admin, calendar, condition, health, onboarding, routine, session, ws_voice
-from app.config import AppConfig, load_config
+from app.api import (
+    admin,
+    calendar,
+    condition,
+    health,
+    lifecycle,
+    onboarding,
+    routine,
+    session,
+    ws_voice,
+)
+from app.config import load_config
 from app.db.engine import init_db
 from app.utils.logging import setup_logging
 
@@ -49,27 +59,16 @@ class _InterceptHandler(logging.Handler):
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
-def _load_adapter(
-    name: str, loader: Callable[[AppConfig], object], config: AppConfig
-) -> object | None:
-    try:
-        adapter = loader(config)
-        logger.info("{} adapter loaded", name)
-        return adapter
-    except Exception as e:  # noqa: BLE001 — degrade gracefully, /health reports the gap
-        logger.error("{} adapter failed to load: {}", name, e)
-        return None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
     app.state.config = None
-    app.state.llm = None
-    app.state.stt = None
-    app.state.tts = None
+    # ADR-030: heavy models are NOT loaded at startup (supersedes ADR-015 lifespan
+    # warmup). The ModelManager loads STT+TTS+LLM on session start / app-open
+    # prewarm and unloads on session end, so idle VRAM ≈ baseline (게임 공존).
+    app.state.models = None
     # Pipecat *Service 인스턴스는 ws_voice가 매 연결마다 새로 만든다 (service_factory).
     # FrameProcessor는 단일 파이프라인 lifecycle에 묶이므로 공유 불가.
     # VAD adapter: Pipecat SileroVADAnalyzer is constructed per ws_voice session
@@ -88,16 +87,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:  # noqa: BLE001 — adapters may still work without the DB
         logger.error("DB initialization failed: {}", e)
 
-    from app.adapters.llm import get_llm_adapter
-    from app.adapters.stt import get_stt_adapter
-    from app.adapters.tts import get_tts_adapter
+    # ADR-030: construct the manager only — no model load here. Loading happens
+    # on ws_voice 세션 시작 or POST /prewarm, unloading on session end.
+    from app.adapters.model_manager import ModelManager
 
-    app.state.llm = _load_adapter("LLM", get_llm_adapter, config)
-    app.state.stt = _load_adapter("STT", get_stt_adapter, config)
-    app.state.tts = _load_adapter("TTS", get_tts_adapter, config)
-
-    if app.state.llm is not None:
-        await app.state.llm.warmup()  # type: ignore[attr-defined]
+    app.state.models = ModelManager(config)
+    logger.info("ModelManager ready (on-demand load/unload, ADR-030) — idle VRAM at baseline")
 
     yield
     logger.info("LocalFit AI shutting down")
@@ -117,6 +112,7 @@ app.include_router(onboarding.router)
 app.include_router(calendar.router)
 app.include_router(condition.router)
 app.include_router(admin.router)
+app.include_router(lifecycle.router)
 app.include_router(ws_voice.router)
 
 

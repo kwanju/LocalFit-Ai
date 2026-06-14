@@ -33,6 +33,13 @@ export interface SessionStartedMessage {
   mode: SessionMode;
 }
 
+// ADR-030: heavy models load on session start (on-demand). Sent right after the
+// socket opens, before session_started, so the UI can show "코치 준비 중" during
+// the cold start instead of a frozen screen.
+export interface CoachPreparingMessage {
+  type: "coach_preparing";
+}
+
 // Coach text response (TextFrame / SafetyResponseFrame)
 export interface TextMessage {
   type: "text";
@@ -98,6 +105,7 @@ export interface ErrorMessage {
 
 export type ServerMessage =
   | SessionStartedMessage
+  | CoachPreparingMessage
   | TextMessage
   | AudioMessage
   | TranscriptionMessage
@@ -113,6 +121,8 @@ export type ServerMessage =
 export interface HealthResponse {
   status: "ok" | "degraded";
   backend: boolean;
+  // ADR-030: true only while a session has models loaded (false when idle).
+  models_loaded?: boolean;
   adapters: Record<"llm" | "stt" | "tts", boolean>;
 }
 

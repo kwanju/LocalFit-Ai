@@ -15,6 +15,35 @@ describe("session reducer — lifecycle", () => {
     expect(s.sessionId).toBe(7);
   });
 
+  it("coach_preparing sets preparing; session_started clears it (ADR-030 cold start)", () => {
+    const preparing = reducer(initialStore, {
+      kind: "server",
+      msg: { type: "coach_preparing" },
+    });
+    expect(preparing.preparing).toBe(true);
+    expect(preparing.started).toBe(false);
+
+    const started = reducer(preparing, {
+      kind: "server",
+      msg: { type: "session_started", session_id: 1, mode: "c2c" },
+    });
+    expect(started.preparing).toBe(false);
+    expect(started.started).toBe(true);
+  });
+
+  it("error during load clears preparing (VRAM 부족 안내 노출)", () => {
+    const preparing = reducer(initialStore, {
+      kind: "server",
+      msg: { type: "coach_preparing" },
+    });
+    const errored = reducer(preparing, {
+      kind: "server",
+      msg: { type: "error", message: "GPU 메모리가 부족해 코치를 켤 수 없어요." },
+    });
+    expect(errored.preparing).toBe(false);
+    expect(errored.error).toContain("GPU 메모리가 부족");
+  });
+
   it("session_ended resets started and clears counting", () => {
     const started = reducer(initialStore, {
       kind: "server",

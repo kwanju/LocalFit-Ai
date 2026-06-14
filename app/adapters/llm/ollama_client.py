@@ -8,8 +8,7 @@ from loguru import logger
 
 from app.config import AppConfig
 
-_WARMUP_TIMEOUT_SEC: float = 120.0
-_WARMUP_KEEP_ALIVE: str = "1h"
+_WARMUP_TIMEOUT_SEC: float = 120.0  # survives a cold qwen3.5:9b load (ADR-029/030)
 
 
 @dataclass
@@ -83,10 +82,34 @@ class OllamaClient:
             logger.error("LLM stream failed: {}", e)
             raise
 
-    async def warmup(self) -> None:
+    async def warmup(self, keep_alive: str | None = None) -> None:
         """Load the model into VRAM so the first real request isn't a cold start.
 
-        Best-effort and self-contained: uses a long timeout and never raises.
+        ADR-030 on-demand: ``keep_alive`` keeps the model resident for the
+        session (defaults to ``config.llm.keep_alive``); the session-end
+        :meth:`unload` drops it again. Best-effort: long timeout, never raises.
+        """
+        ka = keep_alive or self._config.llm.keep_alive
+        try:
+            await asyncio.wait_for(
+                self._client.chat(
+                    model=self._model,
+                    messages=[{"role": "user", "content": "안녕"}],
+                    options={"num_predict": 1},
+                    keep_alive=ka,
+                    think=False,
+                ),
+                timeout=_WARMUP_TIMEOUT_SEC,
+            )
+            logger.info("LLM model warmed up: {} (keep_alive={})", self._model, ka)
+        except Exception as e:  # noqa: BLE001 — warmup is best-effort
+            logger.warning("LLM warmup failed: {}", e)
+
+    async def unload(self) -> None:
+        """Drop the model from Ollama VRAM immediately (ADR-030 session end).
+
+        Sends a minimal request with ``keep_alive=0`` so Ollama unloads the
+        weights now instead of after the idle timer. Best-effort: never raises.
         """
         try:
             await asyncio.wait_for(
@@ -94,14 +117,14 @@ class OllamaClient:
                     model=self._model,
                     messages=[{"role": "user", "content": "안녕"}],
                     options={"num_predict": 1},
-                    keep_alive=_WARMUP_KEEP_ALIVE,
+                    keep_alive="0s",
                     think=False,
                 ),
                 timeout=_WARMUP_TIMEOUT_SEC,
             )
-            logger.info("LLM model warmed up: {}", self._model)
-        except Exception as e:  # noqa: BLE001 — warmup is best-effort
-            logger.warning("LLM warmup failed: {}", e)
+            logger.info("LLM model unloaded (keep_alive=0): {}", self._model)
+        except Exception as e:  # noqa: BLE001 — best-effort
+            logger.warning("LLM unload failed: {}", e)
 
     async def health(self) -> bool:
         try:

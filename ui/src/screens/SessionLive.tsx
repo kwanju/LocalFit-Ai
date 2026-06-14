@@ -54,7 +54,7 @@ const MIC_MODES: readonly { mode: MicMode; label: string }[] = [
 ];
 
 export function SessionLive() {
-  const { status, mode, started, serverState, messages, counting, audioQueue, liveListening, actions } =
+  const { status, mode, started, preparing, serverState, messages, counting, audioQueue, liveListening, actions } =
     useSession();
   const audio = useAudio();
   const wakeLock = useWakeLock();
@@ -210,6 +210,13 @@ export function SessionLive() {
         </div>
       </header>
 
+      {preparing && (
+        <div className="flex items-center gap-2 bg-sky-950 px-3 py-2 text-sm text-sky-200">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-sky-400" aria-hidden="true" />
+          <span>코치를 준비하고 있어요… (모델을 불러오는 중, 최대 30초)</span>
+        </div>
+      )}
+
       {earphoneHint && (
         <div className="flex items-center justify-between gap-2 bg-slate-800 px-3 py-2 text-sm">
           <span>이어폰이 연결된 것 같아요. 음성 출력으로 바꿀까요?</span>
@@ -292,11 +299,12 @@ export function SessionLive() {
             // 세션 시작 전 컨디션 체크인을 먼저 띄운다 (ADR-023). 체크인 후 startSession.
             onClick={() => setCheckinOpen(true)}
             // After 세션 종료 the socket is "closed"; startSession reconnects, so
-            // only block while a (re)connect is mid-flight (2026-06-08).
-            disabled={status === "connecting" || status === "reconnecting"}
+            // only block while a (re)connect is mid-flight (2026-06-08). While the
+            // backend loads models (preparing, ADR-030) keep it disabled too.
+            disabled={status === "connecting" || status === "reconnecting" || preparing}
             className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white disabled:opacity-40"
           >
-            세션 시작
+            {preparing ? "코치 준비 중…" : "세션 시작"}
           </button>
         ) : (
           <>

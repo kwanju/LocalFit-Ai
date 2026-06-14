@@ -28,6 +28,7 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
 
+from app.adapters.model_manager import ModelLoadError
 from app.config import AppConfig
 from app.core.coach_context import is_first_session
 from app.core.confirm_slot import ConfirmSlot
@@ -114,11 +115,27 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         ),
     )
 
+    # ADR-030: heavy models are loaded on demand per session. Trigger the load
+    # (no-op if app-open prewarm already loaded), streaming a "코치 준비 중" notice
+    # while we wait so the cold start is visible, not a frozen UI. VRAM 부족이면
+    # 안내 후 닫는다 (안 행복한 경로).
+    manager = getattr(websocket.app.state, "models", None)
+    if manager is not None:
+        if not manager.loaded:
+            await websocket.send_json({"type": "coach_preparing"})
+        try:
+            await manager.load()
+        except ModelLoadError as e:
+            logger.error("ws_voice: model load failed: {}", e)
+            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.close()
+            return
+
     # Pipecat *Service 인스턴스는 단일 파이프라인 lifecycle에 종속이라 매 연결마다
-    # 새로 만든다. 무거운 모델은 app.state.tts/stt (client) 안에서 한 번만 로드된 채
+    # 새로 만든다. 무거운 모델은 ModelManager(client) 안에서 세션 동안 로드된 채
     # 재사용된다. 어댑터가 없으면 build_pipeline이 Mock으로 폴백.
-    tts_client = getattr(websocket.app.state, "tts", None)
-    stt_client = getattr(websocket.app.state, "stt", None) if use_stt else None
+    tts_client = manager.tts if manager is not None else None
+    stt_client = (manager.stt if manager is not None else None) if use_stt else None
     tts_service = build_tts_service(tts_client)
     stt_service = build_stt_service(stt_client) if use_stt else None
     vad_analyzer = _build_vad_analyzer(config) if (config and use_stt) else None
@@ -455,3 +472,12 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     except Exception as e:
         logger.error("ws_voice pipeline error: {}", e)
         raise
+    finally:
+        # ADR-030: session ended → unload models, reclaim VRAM (idle ≈ baseline).
+        # Guaranteed here (not only in on_client_disconnected) so an abrupt drop
+        # still frees VRAM. unload() is idempotent.
+        if manager is not None:
+            try:
+                await manager.unload()
+            except Exception as e:  # noqa: BLE001 — never mask the original error
+                logger.error("ModelManager unload failed: {}", e)

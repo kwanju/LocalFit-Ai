@@ -6,7 +6,7 @@ llm:
   host: "http://127.0.0.1:11434"   # Ollama 서버 주소 (ADR-002: 로컬만 허용)
   model: "qwen3:8b"                 # 단일 코칭 모델 (ADR-004)
   timeout_sec: 8.0                  # LLM 응답 타임아웃
-  keep_alive: "24h"                 # 모델 unload 방지
+  keep_alive: "30m"                 # ADR-030 on-demand: 세션 중 상주, 종료 시 keep_alive=0 언로드
 
 stt:
   model: "large-v3-turbo"           # faster-whisper 모델 (ADR-005)

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { SessionProvider } from "@/state/session";
 import { Onboarding } from "@/screens/Onboarding";
@@ -5,6 +6,23 @@ import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
 import { Calendar } from "@/screens/Calendar";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
+import { prewarmModels } from "@/api/client";
+import { inTauri } from "@/api/tauri";
+
+// ADR-030 (b): app-open prewarm. When the desktop app opens/refocuses (e.g.
+// reopened from the tray) start loading models so 세션 시작 is fast. This is the
+// only allowed preload trigger — user intent (app open), never a background
+// scheduler (which would fight a running game for VRAM). Browser dev is exempt
+// so casual page loads don't pin VRAM. Best-effort: ignore failures.
+function usePrewarmOnOpen() {
+  useEffect(() => {
+    if (!inTauri()) return;
+    const fire = () => void prewarmModels().catch(() => {});
+    fire();
+    window.addEventListener("focus", fire);
+    return () => window.removeEventListener("focus", fire);
+  }, []);
+}
 
 // Shell that keeps ONE SessionProvider mounted across the workout tabs
 // (운동/기록/설정) so navigating between them never tears down the live session
@@ -26,6 +44,7 @@ const NAV = [
 ];
 
 export default function App() {
+  usePrewarmOnOpen();
   return (
     <BrowserRouter>
       <div className="flex h-full flex-col">

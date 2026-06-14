@@ -40,6 +40,16 @@ class MockLLM:
         return True
 
 
+class FakeManager:
+    """ADR-030 ModelManager stub — a loaded session with only the LLM adapter up."""
+
+    def __init__(self) -> None:
+        self.loaded = True
+        self.llm = MockLLM()
+        self.stt = None
+        self.tts = None
+
+
 @pytest.fixture
 def client(tmp_path) -> AsyncIterator[TestClient]:
     db_path = tmp_path / "test.db"
@@ -54,9 +64,7 @@ def client(tmp_path) -> AsyncIterator[TestClient]:
 
     app.dependency_overrides[get_session] = override_get_session
     with TestClient(app) as test_client:
-        app.state.llm = MockLLM()
-        app.state.stt = None
-        app.state.tts = None
+        app.state.models = FakeManager()
         yield test_client
     app.dependency_overrides.clear()
 
@@ -66,10 +74,21 @@ def test_health_reports_adapter_status(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["backend"] is True
+    assert body["status"] == "ok"  # ADR-030: backend reachable = ok (idle ≠ degraded)
+    assert body["models_loaded"] is True
     assert body["adapters"]["llm"] is True
     assert body["adapters"]["stt"] is False
     assert body["adapters"]["tts"] is False
-    assert body["status"] == "degraded"
+
+
+def test_health_idle_reports_models_unloaded() -> None:
+    """ADR-030: with no models loaded, /health is ok with all adapters false."""
+    app.state.models = None
+    response = TestClient(app).get("/health")
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["models_loaded"] is False
+    assert body["adapters"] == {"llm": False, "stt": False, "tts": False}
 
 
 def test_create_session(client: TestClient) -> None:
