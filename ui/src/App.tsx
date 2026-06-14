@@ -6,9 +6,11 @@ import { SessionLive } from "@/screens/SessionLive";
 import { Settings, readDefaultMode } from "@/screens/Settings";
 import { Calendar } from "@/screens/Calendar";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
+import { ReminderBanner } from "@/components/ReminderBanner";
 import { listen } from "@tauri-apps/api/event";
 import { prewarmModels } from "@/api/client";
 import { inTauri } from "@/api/tauri";
+import { useReminders } from "@/hooks/useReminders";
 
 // ADR-030 (b): app-open prewarm. Start loading models on real app-open intent so
 // 세션 시작 is fast — the only allowed preload trigger (never a background
@@ -38,6 +40,13 @@ function SessionShell() {
   );
 }
 
+// Reminder scheduler + in-app banner (ADR-027). Lives inside the Router so the
+// banner can navigate into the session-start flow on "지금 시작".
+function ReminderChrome() {
+  const { pending, ack } = useReminders();
+  return <ReminderBanner pending={pending} onAck={ack} />;
+}
+
 const NAV = [
   { to: "/", label: "시작", end: true },
   { to: "/session", label: "운동", end: false },
@@ -51,6 +60,7 @@ export default function App() {
     <BrowserRouter>
       <div className="flex h-full flex-col">
         <BackendStatusBanner />
+        <ReminderChrome />
         <main className="min-h-0 flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<Onboarding />} />

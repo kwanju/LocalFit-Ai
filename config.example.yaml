@@ -51,6 +51,17 @@ counting:
   beat_interval_sec: 2.0            # 운동 박자 간격(초)
   max_reps: 200                     # 단일 세트 최대 반복 횟수 (안전 한도)
 
+notifications:                      # 능동 알림 + 백그라운드 스케줄러 (ADR-027)
+  enabled: true
+  lead_minutes: 10                  # 운동 시간 N분 전 알림
+  workout_time: "18:00"             # available_times 미설정 시 기본 운동 리마인드 시각
+  mute_start: "22:00"               # 음소거 시작 (야간) — null 이면 음소거 없음
+  mute_end: "07:00"                 # 음소거 끝 (start>end → 자정 래핑)
+  checkin_enabled: true
+  checkin_time: "09:00"             # 컨디션 체크인 리마인드 시각 (ADR-023)
+  poll_interval_sec: 60             # 스케줄러 폴링 간격 — 사용자 편집 X
+  catchup_minutes: 30               # 놓친 알림 따라잡기 창(분) — 사용자 편집 X
+
 coach:
   proactive_opener: true            # 능동 코치 첫 발화 자동 시작 (ADR-013 §0)
   context_recent_sessions: 5        # 최근 N회 세션을 컨텍스트에 포함 (ADR-013)

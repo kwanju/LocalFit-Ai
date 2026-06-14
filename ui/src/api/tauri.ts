@@ -22,3 +22,13 @@ export async function restartBackend(): Promise<boolean> {
   if (!inTauri()) return false;
   return invoke<boolean>("start_backend");
 }
+
+/**
+ * Fire a native OS toast via the Tauri shell (ADR-027). Used by the reminder
+ * scheduler to surface workout/check-in reminders even when the window is hidden
+ * to the tray. No-op outside Tauri (browser dev shows reminders in-app only).
+ */
+export async function notify(title: string, body: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("notify", { title, body });
+}

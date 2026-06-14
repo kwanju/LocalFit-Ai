@@ -3,7 +3,12 @@
 // 2026-06-07: 운동 기록 초기화 기능 추가 (신규 사용자 시나리오 검증용).
 
 import { useEffect, useState } from "react";
-import { getHealth } from "@/api/client";
+import {
+  getHealth,
+  getNotificationSettings,
+  updateNotificationSettings,
+  type NotificationSettings,
+} from "@/api/client";
 import type { HealthResponse, SessionMode } from "@/api/types";
 
 const DEFAULT_MODE_KEY = "localfit.defaultMode";
@@ -100,6 +105,8 @@ export function Settings() {
         </select>
       </section>
 
+      <NotificationSection />
+
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">서버 상태</h2>
         {healthError && <p className="text-sm text-rose-400">서버에 연결할 수 없습니다.</p>}
@@ -161,6 +168,179 @@ export function Settings() {
         </p>
       </details>
     </div>
+  );
+}
+
+// 능동 알림 설정 (ADR-027). 단일 행 DB 설정(/schedule/settings)을 읽어 수정.
+// poll_interval/catchup 은 읽기 전용(config) 이라 노출하지 않는다.
+const MUTE_DEFAULT = { start: "22:00", end: "07:00" };
+
+function NotificationSection() {
+  const [s, setS] = useState<NotificationSettings | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    getNotificationSettings()
+      .then(setS)
+      .catch(() => setError(true));
+  }, []);
+
+  const patch = async (
+    p: Partial<Omit<NotificationSettings, "poll_interval_sec" | "catchup_minutes">>,
+  ) => {
+    if (!s) return;
+    setS({ ...s, ...p }); // optimistic
+    try {
+      setS(await updateNotificationSettings(p));
+    } catch {
+      setError(true);
+    }
+  };
+
+  if (error && !s) {
+    return (
+      <section className="flex flex-col gap-2">
+        <h2 className="text-lg font-semibold">알림</h2>
+        <p className="text-sm text-rose-400">알림 설정을 불러올 수 없습니다.</p>
+      </section>
+    );
+  }
+  if (!s) {
+    return (
+      <section className="flex flex-col gap-2">
+        <h2 className="text-lg font-semibold">알림</h2>
+        <p className="text-sm text-slate-400">불러오는 중…</p>
+      </section>
+    );
+  }
+
+  // 음소거 사용 여부 = start/end 가 설정되어 있고 서로 다를 때(같으면 빈 구간 = 음소거 없음).
+  const muteOn = s.mute_start != null && s.mute_end != null && s.mute_start !== s.mute_end;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-lg font-semibold">알림</h2>
+      <p className="text-xs text-slate-500">
+        운동 시간이 되면 알려드려요. 앱을 켜지 않아도 트레이에서 동작합니다.
+      </p>
+      <div className="flex flex-col gap-3 rounded-lg bg-slate-800 p-3">
+        <label className="flex items-center justify-between">
+          <span>능동 알림 켜기</span>
+          <input
+            type="checkbox"
+            checked={s.enabled}
+            onChange={(e) => void patch({ enabled: e.target.checked })}
+            className="h-4 w-4 accent-sky-500"
+          />
+        </label>
+
+        <fieldset disabled={!s.enabled} className="flex flex-col gap-3 disabled:opacity-40">
+          <label className="flex items-center justify-between">
+            <span>운동 시간</span>
+            <input
+              type="time"
+              value={s.workout_time}
+              onChange={(e) => void patch({ workout_time: e.target.value })}
+              className="rounded bg-slate-700 px-2 py-1"
+            />
+          </label>
+          <label className="flex items-center justify-between">
+            <span>몇 분 전 알림</span>
+            <input
+              type="number"
+              min={0}
+              max={120}
+              value={s.lead_minutes}
+              onChange={(e) => void patch({ lead_minutes: Number(e.target.value) })}
+              className="w-20 rounded bg-slate-700 px-2 py-1"
+            />
+          </label>
+
+          <label className="flex items-center justify-between">
+            <span>컨디션 체크인 알림</span>
+            <input
+              type="checkbox"
+              checked={s.checkin_enabled}
+              onChange={(e) => void patch({ checkin_enabled: e.target.checked })}
+              className="h-4 w-4 accent-sky-500"
+            />
+          </label>
+          {s.checkin_enabled && (
+            <label className="flex items-center justify-between pl-3">
+              <span className="text-sm text-slate-400">체크인 시간</span>
+              <input
+                type="time"
+                value={s.checkin_time}
+                onChange={(e) => void patch({ checkin_time: e.target.value })}
+                className="rounded bg-slate-700 px-2 py-1"
+              />
+            </label>
+          )}
+
+          <MuteRow
+            muteOn={muteOn}
+            start={s.mute_start ?? MUTE_DEFAULT.start}
+            end={s.mute_end ?? MUTE_DEFAULT.end}
+            onPatch={patch}
+          />
+        </fieldset>
+        {error && <p className="text-xs text-rose-400">설정 저장 중 오류가 발생했습니다.</p>}
+      </div>
+    </section>
+  );
+}
+
+// 야간 음소거 토글 + 시간 구간. 해제는 start==end 빈 구간으로 표현(서버가 같은 값=음소거
+// 없음 처리) — null 을 PUT 으로 보낼 수 없는 제약(update 가 None 스킵)을 우회.
+function MuteRow({
+  muteOn,
+  start,
+  end,
+  onPatch,
+}: {
+  muteOn: boolean;
+  start: string;
+  end: string;
+  onPatch: (p: { mute_start?: string; mute_end?: string }) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center justify-between">
+        <span>야간 음소거</span>
+        <input
+          type="checkbox"
+          checked={muteOn}
+          onChange={(e) =>
+            onPatch(
+              e.target.checked
+                ? { mute_start: MUTE_DEFAULT.start, mute_end: MUTE_DEFAULT.end }
+                : { mute_start: "00:00", mute_end: "00:00" },
+            )
+          }
+          className="h-4 w-4 accent-sky-500"
+        />
+      </label>
+      {muteOn && (
+        <div className="flex items-center justify-between gap-2 pl-3">
+          <span className="text-sm text-slate-400">조용히</span>
+          <div className="flex items-center gap-1">
+            <input
+              type="time"
+              value={start}
+              onChange={(e) => onPatch({ mute_start: e.target.value })}
+              className="rounded bg-slate-700 px-2 py-1"
+            />
+            <span className="text-slate-500">~</span>
+            <input
+              type="time"
+              value={end}
+              onChange={(e) => onPatch({ mute_end: e.target.value })}
+              className="rounded bg-slate-700 px-2 py-1"
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

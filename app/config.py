@@ -86,6 +86,25 @@ class CoachConfig(BaseModel):
     instructor: InstructorConfig = InstructorConfig()
 
 
+class NotificationsConfig(BaseModel):
+    """능동 알림 + 백그라운드 스케줄러 기본값 (ADR-027).
+
+    사용자 편집 가능한 값(enabled·lead·시각·음소거)은 DB ``notification_settings``
+    단일 행이 source of truth 이고, 여기 값은 그 행을 처음 만들 때의 **시드 기본값**이다.
+    ``poll_interval_sec`` · ``catchup_minutes`` 는 운영 노브라 config 전용(미편집).
+    """
+
+    enabled: bool = True
+    lead_minutes: int = 10            # 운동 시간 N분 전 알림
+    workout_time: str = "18:00"       # profile.available_times 미설정 시 기본 운동 리마인드 시각
+    mute_start: str | None = "22:00"  # 음소거 시작 (None 이면 음소거 없음)
+    mute_end: str | None = "07:00"    # 음소거 끝 (start>end 면 야간 래핑)
+    checkin_enabled: bool = True
+    checkin_time: str = "09:00"
+    poll_interval_sec: int = 60       # 스케줄러(웹뷰 JS) 폴링 간격 — config 전용
+    catchup_minutes: int = 30         # 놓친 알림 따라잡기 창 — config 전용
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig
     stt: STTConfig
@@ -94,6 +113,7 @@ class AppConfig(BaseModel):
     db: DBConfig
     counting: CountingConfig
     coach: CoachConfig = CoachConfig()
+    notifications: NotificationsConfig = NotificationsConfig()
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:

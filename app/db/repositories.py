@@ -5,7 +5,7 @@ from loguru import logger
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.config import DEFAULT_USER_ID
+from app.config import DEFAULT_USER_ID, NotificationsConfig
 
 # core/plan 은 외부 의존 0 인 순수 도메인(일자 분배·진척 값객체). db→core.plan 은
 # import 사이클을 만들지 않는다(core.plan 은 어떤 것도 import 하지 않음). ADR-024.
@@ -19,6 +19,7 @@ from app.db.models import (
     InteractionLog,
     MemoryFact,
     MemoryKind,
+    NotificationSettings,
     PlanDay,
     PlanStatus,
     Routine,
@@ -641,3 +642,58 @@ class PlanRepository:
         plan.status = PlanStatus(status)
         self._session.add(plan)
         await self._session.commit()
+
+
+# 사용자 편집 가능한 알림 설정 필드 — PUT 으로 갱신 허용되는 화이트리스트.
+_NOTIFICATION_FIELDS: frozenset[str] = frozenset(
+    {
+        "enabled",
+        "lead_minutes",
+        "workout_time",
+        "mute_start",
+        "mute_end",
+        "checkin_enabled",
+        "checkin_time",
+    }
+)
+
+
+class NotificationSettingsRepository:
+    """알림 설정 단일 행(id=1) 저장소 (ADR-027). config 기본값으로 시드 후 UI 가 갱신."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_or_create(self, defaults: NotificationsConfig) -> NotificationSettings:
+        """단일 행을 반환. 없으면 config 기본값으로 시드한다(첫 접근 시 1회)."""
+        row = await self._session.get(NotificationSettings, 1)
+        if row is not None:
+            return row
+        row = NotificationSettings(
+            id=1,
+            enabled=defaults.enabled,
+            lead_minutes=defaults.lead_minutes,
+            workout_time=defaults.workout_time,
+            mute_start=defaults.mute_start,
+            mute_end=defaults.mute_end,
+            checkin_enabled=defaults.checkin_enabled,
+            checkin_time=defaults.checkin_time,
+        )
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return row
+
+    async def update(
+        self, defaults: NotificationsConfig, **fields: object
+    ) -> NotificationSettings:
+        """화이트리스트 필드만 부분 갱신. 알 수 없는 키는 무시(방어적)."""
+        row = await self.get_or_create(defaults)
+        for key, value in fields.items():
+            if key in _NOTIFICATION_FIELDS and value is not None:
+                setattr(row, key, value)
+        row.updated_at = datetime.now(UTC)
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return row

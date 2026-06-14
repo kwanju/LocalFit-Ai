@@ -247,6 +247,33 @@ class MemoryFact(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class NotificationSettings(SQLModel, table=True):
+    """능동 알림 사용자 설정 — 단일 행(id=1) (ADR-027).
+
+    단일 사용자(ADR-002)라 한 행만 둔다. 처음 읽을 때 ``config.notifications`` 기본값으로
+    시드되고, Settings UI 의 ``PUT /schedule/settings`` 로 갱신된다. ``poll_interval_sec`` ·
+    ``catchup_minutes`` 같은 운영 노브는 여기 없고 config 에만 있다(사용자 미편집).
+
+    시각은 "HH:MM" 문자열. ``mute_start``/``mute_end`` 가 None 이면 음소거 없음.
+    새 테이블이라 create_all 이 만든다(마이그레이션 스텝 불필요 — phase v4-4 와 동일).
+    """
+
+    __tablename__ = "notification_settings"
+
+    id: int | None = Field(default=None, primary_key=True)
+    enabled: bool = Field(default=True)
+    lead_minutes: int = Field(default=10)
+    workout_time: str = Field(default="18:00")
+    # mute 의 기본값은 config(NotificationsConfig)이 시드 시 채운다. 여기 컬럼 default 를
+    # None 으로 둬야 사용자가 "음소거 없음"(NULL)을 저장할 수 있다 — SQLAlchemy 는 INSERT
+    # 시 값이 None 이면 컬럼 default 를 적용해버려, default 가 "22:00"이면 None 저장 불가.
+    mute_start: str | None = Field(default=None)
+    mute_end: str | None = Field(default=None)
+    checkin_enabled: bool = Field(default=True)
+    checkin_time: str = Field(default="09:00")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class InteractionLog(SQLModel, table=True):
     __tablename__ = "interaction_log"
 

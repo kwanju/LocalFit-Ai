@@ -20,6 +20,7 @@ from app.api import (
     lifecycle,
     onboarding,
     routine,
+    schedule,
     session,
     ws_voice,
 )
@@ -113,6 +114,7 @@ app.include_router(calendar.router)
 app.include_router(condition.router)
 app.include_router(admin.router)
 app.include_router(lifecycle.router)
+app.include_router(schedule.router)
 app.include_router(ws_voice.router)
 
 
