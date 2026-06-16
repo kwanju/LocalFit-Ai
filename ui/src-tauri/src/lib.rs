@@ -8,7 +8,8 @@
 // is deliberately out of scope (ADR-031 후순위 — a separate task); this shell
 // stabilizes the dev / externally-started backend path.
 
-use std::process::{Child, Command};
+use std::fs::File;
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
 use tauri::{
@@ -34,11 +35,46 @@ fn repo_root() -> std::path::PathBuf {
 
 /// S-5: spawn the FastAPI + model backend as a child process.
 /// Matches scripts/dev.bat: `uv run python -m app.main` from the repo root.
+///
+/// stdio fix (prod): a GUI Tauri process has no console, so a spawned child
+/// inherits *invalid* stdout/stderr handles. Qwen3-TTS model loading writes
+/// progress to stdout/stderr during init → on Windows the first write to the
+/// broken handle raises `[Errno 22] Invalid argument` and model load fails
+/// ("코치 모델을 불러오지 못했어요"). dev.bat avoided this by running in a cmd
+/// console. We redirect the child's stdout/stderr to a log file (valid handles);
+/// app logs still go to loguru's own file. `CREATE_NO_WINDOW` also stops a
+/// console flash. stdin is nulled (uvicorn never reads it).
 fn spawn_backend() -> std::io::Result<Child> {
-    Command::new("uv")
-        .args(["run", "python", "-m", "app.main"])
-        .current_dir(repo_root())
-        .spawn()
+    let root = repo_root();
+    let mut cmd = Command::new("uv");
+    cmd.args(["run", "python", "-m", "app.main"])
+        .current_dir(&root)
+        .stdin(Stdio::null());
+
+    let log_dir = root.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    match File::create(log_dir.join("sidecar.out.log")) {
+        Ok(out) => {
+            match out.try_clone() {
+                Ok(err) => cmd.stdout(Stdio::from(out)).stderr(Stdio::from(err)),
+                Err(_) => cmd.stdout(Stdio::from(out)).stderr(Stdio::null()),
+            };
+        }
+        // Even if the file can't be created, NUL is a valid handle (unlike the
+        // inherited broken one) so the TTS-load write no longer EINVALs.
+        Err(_) => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
 }
 
 /// S-5 fix: `uv run python` makes `uv` the direct child and `python` a *grandchild*.
