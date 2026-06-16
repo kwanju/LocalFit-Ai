@@ -45,7 +45,9 @@ async def _drain(ws, results: dict, *, until: float, label: str) -> None:
             print("  … 코치 준비 중(모델 로드 중)")
         elif t == "session_started":
             results["session_started"] = True
-            results.setdefault("resumed", msg.get("resumed", False))
+            # 단계별(opener/switch) resumed 를 따로 기록 — 모드 전환 판정이 정확해진다.
+            results[f"{label}_resumed"] = bool(msg.get("resumed", False))
+            results[f"{label}_session_id"] = msg.get("session_id")
             print(
                 f"  ▶ session_started: id={msg.get('session_id')} "
                 f"mode={msg.get('mode')} resumed={msg.get('resumed', False)}"
@@ -100,9 +102,11 @@ def _verdict(r: dict, say: str | None, switch: str | None) -> tuple[bool, list[s
     if say:
         checks.append(("사용자 발화에 코치 응답", len(r["reply_texts"]) > 0))
     if switch:
-        # 전환 후 session_started 가 resumed=True 면 opener 재발화 없이 이어받음(버그 B #6).
-        no_reopener = len(r["switch_texts"]) == 0 or bool(r.get("resumed"))
-        checks.append(("모드 전환 시 opener 재발화 안 함", no_reopener))
+        # 전환 후 session_started 가 resumed=True 면 같은 세션 이어받음(버그 B #6).
+        same_session = r.get("switch_session_id") == r.get("opener_session_id")
+        checks.append(("모드 전환 시 세션 이어받기(resumed)", bool(r.get("switch_resumed"))))
+        checks.append(("모드 전환 시 opener 재발화 안 함", len(r["switch_texts"]) == 0))
+        checks.append(("모드 전환 후 같은 세션 id 유지", same_session))
     lines = [f"  {'✅' if ok else '❌'} {name}" for name, ok in checks]
     return all(ok for _, ok in checks), lines
 
