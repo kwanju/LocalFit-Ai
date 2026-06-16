@@ -16,7 +16,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from loguru import logger
-from pipecat.frames.frames import Frame
+from pipecat.frames.frames import (
+    Frame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.core.coach_response import (
@@ -33,6 +37,7 @@ from app.core.coach_response import (
 from app.core.confirm_slot import ConfirmSlot
 from app.pipecat_services.counting_manager import CountingManager
 from app.pipecat_services.frames import CoachActionFrame
+from app.prompts.coaching import SET_BASELINE_NEEDS_PROPOSAL_FOLLOW_UP_MESSAGE
 
 StartCountingFn = Callable[[StartCountingAction], Awaitable[None]]
 LogConditionFn = Callable[[LogConditionAction], Awaitable[None]]
@@ -42,6 +47,8 @@ CommitPlanFn = Callable[[ProposePlanAction], Awaitable[None]]
 CommitPlanAdjustmentFn = Callable[[ProposePlanAdjustmentAction], Awaitable[None]]
 SetBaselineFn = Callable[[SetBaselineAction], Awaitable[None]]
 CommitCalendarSyncFn = Callable[[ProposeCalendarSyncAction], Awaitable[None]]
+# 말-행동 불일치 안전망(ADR-032 §구현 연계): 후속 코치 turn 을 유도하는 메시지를 큐잉.
+RequestFollowupFn = Callable[[str], Awaitable[None]]
 
 
 class ActionDispatcherProcessor(FrameProcessor):
@@ -71,6 +78,7 @@ class ActionDispatcherProcessor(FrameProcessor):
         commit_plan_adjustment: CommitPlanAdjustmentFn | None = None,
         set_baseline: SetBaselineFn | None = None,
         commit_calendar_sync: CommitCalendarSyncFn | None = None,
+        request_followup: RequestFollowupFn | None = None,
         counting_manager: CountingManager | None = None,
     ) -> None:
         super().__init__()
@@ -83,7 +91,12 @@ class ActionDispatcherProcessor(FrameProcessor):
         self._commit_plan_adjustment = commit_plan_adjustment
         self._set_baseline = set_baseline
         self._commit_calendar_sync = commit_calendar_sync
+        self._request_followup = request_followup
         self._counting_manager = counting_manager
+        # 한 LLM 응답 안에서 본 액션 추적(말-행동 불일치 안전망, ADR-032). set_baseline 만
+        # 내고 propose_set/start 를 안 내면 첫 세션이 정지하므로 follow-up 으로 이어준다.
+        self._resp_set_baseline = False
+        self._resp_proposed_or_started = False
         # 사용자 확답 없이 직전 turn에 start_counting 들어왔는지 추적 (가드).
         # LLM이 propose_set 발행 시 True, start_counting 처리 후 False 로 리셋.
         self._allow_direct_start: bool = False
@@ -95,14 +108,41 @@ class ActionDispatcherProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
+        if isinstance(frame, LLMFullResponseStartFrame):
+            # 새 응답 시작 — 액션 추적 리셋.
+            self._resp_set_baseline = False
+            self._resp_proposed_or_started = False
+            await self.push_frame(frame, direction)
+            return
+
         if isinstance(frame, CoachActionFrame) and frame.action is not None:
             await self._dispatch(frame.action)
             return  # don't forward CoachActionFrame to TTS
 
+        if isinstance(frame, LLMFullResponseEndFrame):
+            await self._maybe_followup()
+            await self.push_frame(frame, direction)
+            return
+
         await self.push_frame(frame, direction)
+
+    async def _maybe_followup(self) -> None:
+        """set_baseline 만 내고 운동 제안/시작이 없으면 첫 세션이 정지한다 — follow-up 으로
+        보수적 첫 세트 제안을 유도한다(ADR-032 §구현 연계, 말-행동 불일치 안전망)."""
+        if (
+            self._resp_set_baseline
+            and not self._resp_proposed_or_started
+            and self._request_followup is not None
+        ):
+            logger.info("set_baseline without propose_set → follow-up 유도(정지 방지)")
+            try:
+                await self._request_followup(SET_BASELINE_NEEDS_PROPOSAL_FOLLOW_UP_MESSAGE)
+            except Exception as e:  # noqa: BLE001 — never break the pipeline
+                logger.error("baseline follow-up request failed: {}", e)
 
     async def _dispatch(self, action) -> None:
         if isinstance(action, ProposeSetAction):
+            self._resp_proposed_or_started = True
             self._slot.set(action)
             logger.info(
                 "dispatch propose_set: exercise={} reps={} sets={} rest={}s",
@@ -111,6 +151,8 @@ class ActionDispatcherProcessor(FrameProcessor):
             return
 
         if isinstance(action, StartCountingAction):
+            # propose 든 start 든 "다음 운동 단계"가 응답에 있으면 정지 위험 없음.
+            self._resp_proposed_or_started = True
             # 가드: 사용자 확답 없이는 LLM 마음대로 운동 시작 못 함 (2026-06-07 사용자 피드백).
             # ConfirmRule에서 검증된 accept-keyword 응답일 때만 has_pending 이 막 비워졌으니
             # _allow_direct_start 가 True (ConfirmRule이 직접 만든 액션). LLM 이 자기 마음대로
@@ -201,6 +243,7 @@ class ActionDispatcherProcessor(FrameProcessor):
             return
 
         if isinstance(action, SetBaselineAction):
+            self._resp_set_baseline = True
             # 첫 체력검증 결과 (ADR-028). 대화로 확인된 자가보고치라 record_constraint 와
             # 동일하게 확답 없이 즉시 1층 fitness_baseline 에 저장한다. 운동 *시작* 은
             # 함께 내는 propose_set 의 확답 게이트가 막으므로 회귀 가드는 그대로 유지.

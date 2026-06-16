@@ -100,6 +100,14 @@ PLAN_ADJUST_NO_PLAN_FOLLOW_UP_MESSAGE: str = (
     "정해보라고 짧게 권하세요. 40자 이내.)"
 )
 
+# ADR-028/032: set_baseline 만 내고 propose_set 을 안 내면 첫 세션이 정지한다(코치가
+# "저장했다"고만 말하고 다음 단계가 없음). 디스패처가 이 상황을 감지해 follow-up 으로
+# 보수적 첫 세트 제안을 유도한다(말-행동 불일치 안전망, ADR-032 §구현 연계).
+SET_BASELINE_NEEDS_PROPOSAL_FOLLOW_UP_MESSAGE: str = (
+    "(기준선을 저장했습니다. 이제 그 70% 수준의 보수적인 첫 세트를 propose_set 으로 "
+    "제안하고 시작할지 물어보세요. 운동을 바로 시작하지는 마세요. 60자 이내.)"
+)
+
 # ADR-022 §9-2: 캘린더 등록 결과를 commit 콜백이 LLM follow-up 으로 안내한다(무동작 금지).
 CALENDAR_SYNC_DONE_FOLLOW_UP_MESSAGE: str = (
     "(이번 주 운동 일정 {count}건을 캘린더에 등록했습니다. 사용자에게 짧게 확인만 해 주세요. "

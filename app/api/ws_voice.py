@@ -15,6 +15,8 @@ Session lifecycle events (session_started / session_ended / vad) are sent via
 OutputTransportMessageFrame.
 """
 
+import time
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -70,6 +72,10 @@ from app.prompts.coaching import (
 
 router = APIRouter(tags=["ws"])
 
+# 모드 전환 재연결로 인정하는 최대 공백(초). 이보다 오래된 carry 는 무시한다 — 오래
+# 전 끊긴 세션을 엉뚱하게 이어받지 않도록(단일 사용자, ADR-032 §구현 연계).
+_RESUME_MAX_GAP_SEC = 60.0
+
 
 def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
     vad_cfg = config.vad
@@ -88,8 +94,12 @@ def _build_vad_analyzer(config: AppConfig) -> VADAnalyzer:
 
 
 @router.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
-    """Pipecat 3-mode voice pipeline endpoint (C2C/C2S/S2S — ADR-021)."""
+async def ws_voice(websocket: WebSocket, mode: str = "C2C", resume: int = 0) -> None:
+    """Pipecat 3-mode voice pipeline endpoint (C2C/C2S/S2S — ADR-021).
+
+    ``resume=1`` (모드 전환 시 프론트가 붙임): 직전 세션의 대화 이력·세션을 이어받아
+    opener 를 생략한다(ADR-032 §구현 연계, 세션 연속성). 신규 시작은 resume=0.
+    """
     try:
         session_mode = SessionMode(mode.upper())
     except ValueError:
@@ -274,6 +284,12 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
                 InputTextRawFrame(text=CALENDAR_SYNC_NONE_FOLLOW_UP_MESSAGE)
             )
 
+    # 말-행동 불일치 안전망(ADR-032): 디스패처가 follow-up 코치 turn 을 요청하면 user
+    # 메시지로 큐잉한다(plan-adjust follow-up 과 동일 메커니즘). worker 는 아래에서 만들어
+    # 지지만, 이 함수는 파이프라인 가동 후에만 호출되므로 late-binding 으로 안전하다.
+    async def _request_followup(message: str) -> None:
+        await worker.queue_frame(InputTextRawFrame(text=message))
+
     safety = SafetyGuardProcessor(
         counting_manager=counting_manager,
         record_constraint=_record_constraint,
@@ -288,6 +304,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         commit_plan_adjustment=_commit_plan_adjustment,
         set_baseline=_set_baseline,
         commit_calendar_sync=_commit_calendar_sync,
+        request_followup=_request_followup,
     )
     confirm = ConfirmRuleProcessor(slot, dispatcher=dispatcher)
 
@@ -400,9 +417,44 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
         counting_manager.on_session_complete = on_session_done
         counting_manager.on_rest_event = on_rest
 
+    def _take_fresh_carry() -> dict | None:
+        """모드 전환(resume=1) 재연결이고 carry 가 신선하면 그것을 소비해 반환. 아니면 None."""
+        carry = getattr(websocket.app.state, "session_carry", None)
+        if not resume or not isinstance(carry, dict):
+            return None
+        if time.monotonic() - carry.get("ts", 0.0) > _RESUME_MAX_GAP_SEC:
+            return None
+        websocket.app.state.session_carry = None  # 한 번만 소비
+        return carry
+
     @transport.event_handler("on_client_connected")
     async def on_connected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
-        logger.info("ws_voice client connected: mode={}", session_mode.value)
+        logger.info("ws_voice client connected: mode={} resume={}", session_mode.value, resume)
+
+        # 모드 전환 재연결(ADR-032 §구현 연계): 직전 세션·대화 이력을 이어받고 opener 생략.
+        carry = _take_fresh_carry()
+        if carry is not None and carry.get("session_id") is not None and config is not None:
+            _db_session_id[0] = carry["session_id"]
+            try:
+                async with create_db_session() as db:
+                    await SessionRepository(db).reactivate(carry["session_id"])
+                if llm_processor is not None:
+                    llm_processor.restore_history(carry.get("history") or [])
+                logger.info(
+                    "ws_voice: resumed session {} on mode switch — opener skipped",
+                    carry["session_id"],
+                )
+            except Exception as e:  # noqa: BLE001 — 복원 실패 시 새 세션으로 강등
+                logger.error("session resume failed, falling back to fresh session: {}", e)
+                carry = None
+            if carry is not None:
+                await worker.queue_frame(OutputTransportMessageFrame(message={
+                    "type": "session_started",
+                    "session_id": _db_session_id[0] or 0,
+                    "mode": session_mode.value.lower(),
+                    "resumed": True,
+                }))
+                return  # 신규 세션 생성·opener 생략
 
         # WorkoutSession 생성 (SetLog 기록에 필요)
         if config is not None:
@@ -459,6 +511,19 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C") -> None:
     @transport.event_handler("on_client_disconnected")
     async def on_disconnected(transport: FastAPIWebsocketTransport, ws: WebSocket) -> None:
         logger.info("ws_voice client disconnected: mode={}", session_mode.value)
+
+        # 0) 모드 전환 재연결을 위해 대화 이력·세션 id 를 carry 에 저장(history 초기화 전에!).
+        #    바로 뒤 resume=1 재연결이 이걸 이어받는다. 신선도(_RESUME_MAX_GAP_SEC)로
+        #    오래된 carry 의 오인 복원을 막는다(ADR-032 §구현 연계, 단일 사용자).
+        try:
+            if llm_processor is not None and _db_session_id[0] is not None:
+                websocket.app.state.session_carry = {
+                    "history": llm_processor.history,
+                    "session_id": _db_session_id[0],
+                    "ts": time.monotonic(),
+                }
+        except Exception as e:  # noqa: BLE001 — carry 저장 실패는 연속성만 잃을 뿐
+            logger.warning("session carry save failed: {}", e)
 
         # 1) LLM/TTS 진행 중인 작업 즉시 무효화. disconnect 후 LLM 응답이 도착해
         #    start_counting 까지 발화하던 문제 차단 (2026-06-07).

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from pipecat.frames.frames import Frame, TextFrame
+from pipecat.frames.frames import (
+    Frame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    TextFrame,
+)
 from pipecat.tests.utils import run_test
 
 from app.core.coach_response import (
@@ -241,3 +246,40 @@ async def test_calendar_sync_commits_only_after_allow() -> None:
     await _drive(disp, [CoachActionFrame(action=action)])
     commit.assert_awaited_once()
     assert not slot.has_pending_calendar
+
+
+async def test_set_baseline_without_proposal_triggers_followup() -> None:
+    """말-행동 안전망(ADR-032): set_baseline 만 내고 propose_set 이 없으면 첫 세션이
+    정지하므로 follow-up 을 요청해야 한다."""
+    slot = ConfirmSlot()
+    followup = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, set_baseline=AsyncMock(), request_followup=followup)
+    baseline = SetBaselineAction(entries=[{"exercise": "스쿼트", "metric": "reps", "value": 50}])
+    await _drive(
+        disp,
+        [
+            LLMFullResponseStartFrame(),
+            CoachActionFrame(action=baseline),
+            LLMFullResponseEndFrame(),
+        ],
+    )
+    followup.assert_awaited_once()
+
+
+async def test_set_baseline_with_proposal_no_followup() -> None:
+    """같은 응답에 propose_set 이 함께 오면(ADR-028 정상 경로) follow-up 은 없다."""
+    slot = ConfirmSlot()
+    followup = AsyncMock()
+    disp = ActionDispatcherProcessor(slot, set_baseline=AsyncMock(), request_followup=followup)
+    baseline = SetBaselineAction(entries=[{"exercise": "스쿼트", "metric": "reps", "value": 50}])
+    proposal = ProposeSetAction(exercise="스쿼트", reps=35, sets=3, rest_sec=60)
+    await _drive(
+        disp,
+        [
+            LLMFullResponseStartFrame(),
+            CoachActionFrame(action=baseline),
+            CoachActionFrame(action=proposal),
+            LLMFullResponseEndFrame(),
+        ],
+    )
+    followup.assert_not_awaited()

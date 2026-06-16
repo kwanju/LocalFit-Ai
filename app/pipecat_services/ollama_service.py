@@ -86,6 +86,12 @@ class StructuredOllamaProcessor(FrameProcessor):
     def reset_history(self) -> None:
         self._history.clear()
 
+    def restore_history(self, history: list[dict[str, str]]) -> None:
+        """이전 세션의 대화 이력을 복원한다(모드 전환 시 연속성, ADR-032 §구현 연계).
+        토큰 예산 보호를 위해 복원 후에도 길이를 제한한다."""
+        self._history = list(history)
+        self._truncate_history()
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 

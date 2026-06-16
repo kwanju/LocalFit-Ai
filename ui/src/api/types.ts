@@ -31,6 +31,8 @@ export interface SessionStartedMessage {
   type: "session_started";
   session_id: number;
   mode: SessionMode;
+  // 모드 전환 재연결로 이어받은 세션이면 true — UI 가 "세션을 시작했어요" 재표시를 생략(ADR-032).
+  resumed?: boolean;
 }
 
 // ADR-030: heavy models load on session start (on-demand). Sent right after the

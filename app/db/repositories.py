@@ -64,6 +64,20 @@ class SessionRepository:
         await self._session.refresh(ws)
         return ws
 
+    async def reactivate(self, session_id: int) -> WorkoutSession | None:
+        """종료된 세션을 다시 active 로 되돌린다(ended_at 해제) — 모드 전환 시 같은
+        세션을 이어가기 위함(ADR-032 §구현 연계, 세션 연속성). 단일 사용자라 별도 격리
+        없이 id 로만 복원한다. 없으면 None."""
+        ws = await self.get_by_id(session_id)
+        if ws is None:
+            return None
+        ws.status = SessionStatus.active
+        ws.ended_at = None
+        self._session.add(ws)
+        await self._session.commit()
+        await self._session.refresh(ws)
+        return ws
+
     async def update_status(self, session_id: int, status: str) -> None:
         """Update workout-session status by string value (ADR-008). Auto-stamps
         ``ended_at`` when transitioning to a terminal status."""

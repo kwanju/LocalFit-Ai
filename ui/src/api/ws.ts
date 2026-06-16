@@ -16,12 +16,13 @@ interface CoachSocketHandlers {
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 8000;
 
-function resolveUrl(mode: SessionMode): string {
+function resolveUrl(mode: SessionMode, resume: boolean): string {
   const base = wsBaseOverride();
-  const modeParam = `mode=${mode.toUpperCase()}`;
-  if (base) return `${base}/ws/voice?${modeParam}`;
+  // resume=1 → 모드 전환 시 백엔드가 직전 세션·대화 이력을 이어받고 opener 를 생략(ADR-032).
+  const q = `mode=${mode.toUpperCase()}${resume ? "&resume=1" : ""}`;
+  if (base) return `${base}/ws/voice?${q}`;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/ws/voice?${modeParam}`;
+  return `${proto}//${window.location.host}/ws/voice?${q}`;
 }
 
 export class CoachSocket {
@@ -30,6 +31,8 @@ export class CoachSocket {
   private attempt = 0;
   private reconnectTimer: number | null = null;
   private _mode: SessionMode = "c2c";
+  // 다음 open() 한 번만 resume 으로 연결할지(모드 전환 재연결). 사용 후 리셋.
+  private _resumeNext = false;
   private readonly outbox: ClientMessage[] = [];
 
   constructor(private readonly handlers: CoachSocketHandlers) {}
@@ -63,7 +66,8 @@ export class CoachSocket {
 
   private open(): void {
     this.handlers.onStatus(this.attempt === 0 ? "connecting" : "reconnecting");
-    const ws = new WebSocket(resolveUrl(this._mode));
+    const ws = new WebSocket(resolveUrl(this._mode, this._resumeNext));
+    this._resumeNext = false; // 한 번만 적용
     this.ws = ws;
 
     ws.onopen = () => {
@@ -120,6 +124,27 @@ export class CoachSocket {
     this._mode = mode;
     // Close intentionally then reopen — intentionalClose prevents auto-reconnect
     // but open() resets it.
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ws?.close();
+    this.ws = null;
+    this.attempt = 0;
+    this.open();
+  }
+
+  /**
+   * Switch session mode while preserving the conversation (ADR-032 §구현 연계).
+   * Unlike start(), this does NOT send `end` (which would end the DB session) —
+   * it closes and reopens with `resume=1` so the backend carries the prior
+   * session + chat history and skips the proactive opener.
+   */
+  switchMode(mode: SessionMode): void {
+    if (this._mode === mode && this.isOpen) return;
+    this._mode = mode;
+    this._resumeNext = true;
+    this.intentionalClose = true; // 닫힘이 auto-reconnect 를 부르지 않게; open()이 리셋.
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

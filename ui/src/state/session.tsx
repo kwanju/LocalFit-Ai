@@ -135,7 +135,10 @@ function handleServer(store: SessionStore, msg: ServerMessage): SessionStore {
         mode: msg.mode,
         error: null,
         serverState: "active",
-        messages: pushEntry(store.messages, { role: "system", text: "세션을 시작했어요." }),
+        // 모드 전환으로 이어받은 세션은 대화가 계속되므로 시작 안내를 다시 띄우지 않는다.
+        messages: msg.resumed
+          ? store.messages
+          : pushEntry(store.messages, { role: "system", text: "세션을 시작했어요." }),
       };
 
     case "text": {
@@ -373,10 +376,11 @@ export function SessionProvider({
       },
 
       switchMode: (mode) => {
-        socket.end();
+        // 세션을 끝내고 새로 시작하지 않는다 — resume 재연결로 대화 이력·세션을
+        // 이어받아 opener 가 다시 발화하지 않게 한다(ADR-032 §구현 연계).
         dispatch({ kind: "set_mode", mode });
         modeRef.current = mode;
-        socket.start(mode);
+        socket.switchMode(mode);
       },
 
       sendText: (text) => {
