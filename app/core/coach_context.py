@@ -287,8 +287,8 @@ class CoachContextBuilder:
     def _first_session_block(self, profile) -> str:
         """ADR-028 첫 체력검증 지시문 + 온보딩 자가보고 시드.
 
-        고정값을 던지지 말고, 온보딩 시드를 대화로 확인·보정한 뒤 보수적(≈70%) 시작을
-        제안하라고 코치에게 지시한다. 시드가 없으면 대화로 수집(안 행복한 경로)."""
+        고정값을 던지지 말고, 온보딩 시드를 대화로 확인·보정한 뒤 적당한 시작을 제안하라고
+        코치에게 지시한다(ADR-033: 과도한 보수 표현 제거). 시드 없으면 대화로 수집."""
         seed = _parse_assessment_seed(profile)
         if seed:
             seed_line = "온보딩 자가보고 시드: " + ", ".join(
@@ -300,7 +300,7 @@ class CoachContextBuilder:
         # 짧게 유지 — 길고 메타적인 지시는 9b 의 구조화(JSON) 출력 안정성을 떨어뜨린다.
         return (
             f"🔰 첫 세션(기준선 없음): 대화로 체력 확인. {seed_line} 시드가 맞는지 확인한 뒤 "
-            "70% 보수적 시작을 제안하고, 동의하면 set_baseline 으로 저장. 한계 측정 금지."
+            "사용자가 말한 수치를 그대로 기준선으로 set_baseline 저장하고, 적당한 첫 세트를 제안."
         )
 
     async def _calendar_signals(self) -> CalendarSignals:
