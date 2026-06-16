@@ -69,6 +69,7 @@ v4 방향은 `docs/future/v4-vision.md` §0-2 deep interview 결과로 확정. v
 | 029 | LLM 모델 — qwen3.5:9b (config 교체) | **Accepted** (2026-06-10) | 004 |
 | 030 | 모델 lifecycle — on-demand 로드/언로드 | **Accepted** (2026-06-10) | 015 |
 | 031 | UI 플랫폼 — native 데스크탑(Tauri) | **Accepted** (2026-06-10) | 010 |
+| [032](032-coaching-intensity-model.md) | 코칭 품질 — 맨몸운동 강도 모델(RPE/RIR + 점진적 과부하) | **Accepted** (2026-06-16) | — |
 
 > Phase v4-0 Tauri 탐사 **GO**(`docs/agent-tasks/v4/phase-0-tauri-spike-result.md`)로 native 의존 ADR 027/030/031 을 Accepted 승격하고 010/015 를 Superseded 로 갱신함(2026-06-10). 후속 fix(비차단): S-4 마이크 입력(webview2 권한)·S-6 toast 클릭 흐름 — 구현 phase 에서 마무리.
 

@@ -49,16 +49,37 @@ describe("useBackendHealth", () => {
     expect(result.current.status).toBe("up");
   });
 
-  it("flips to 'down' when the sidecar dies after being reachable", async () => {
+  it("does NOT flip to 'down' on a single transient failure (debounce)", async () => {
     mockGetHealth.mockResolvedValueOnce(OK_HEALTH);
     const { result } = renderHook(() => useBackendHealth());
     await flush();
     expect(result.current.status).toBe("up");
 
-    // 이후 폴링이 실패하면(사이드카 강제 종료) 'down'으로.
-    mockGetHealth.mockRejectedValue(new Error("died"));
+    // 단발 실패(모델 로드 중 이벤트루프 정체로 1회 타임아웃 등)는 'up' 유지.
+    mockGetHealth.mockRejectedValueOnce(new Error("blip"));
     await flush(5000);
+    expect(result.current.status).toBe("up");
+  });
+
+  it("flips to 'down' only after FAILS_TO_DOWN consecutive failures", async () => {
+    mockGetHealth.mockResolvedValueOnce(OK_HEALTH);
+    const { result } = renderHook(() => useBackendHealth());
+    await flush();
+    expect(result.current.status).toBe("up");
+
+    // 사이드카 강제 종료 → 연속 실패가 쌓여야 'down' (3회).
+    mockGetHealth.mockRejectedValue(new Error("died"));
+    await flush(5000); // 1회 실패
+    expect(result.current.status).toBe("up");
+    await flush(5000); // 2회
+    expect(result.current.status).toBe("up");
+    await flush(5000); // 3회 → down
     expect(result.current.status).toBe("down");
+
+    // 복구되면 즉시 'up' + streak 리셋.
+    mockGetHealth.mockResolvedValue(OK_HEALTH);
+    await flush(5000);
+    expect(result.current.status).toBe("up");
   });
 
   it("polls /health on an interval", async () => {

@@ -13,6 +13,36 @@ import type { HealthResponse, SessionMode } from "@/api/types";
 
 const DEFAULT_MODE_KEY = "localfit.defaultMode";
 
+// 콜드스타트(사이드카+모델 ≈30s) 동안 첫 fetch 가 빗나가도 그대로 에러로 굳지 않게
+// 잠시 재시도한다 — 이전에는 mount 시 1회만 호출해, 부팅 전 실패가 영구 에러로 남았다.
+const COLD_START_RETRIES = 8;
+const COLD_START_DELAY_MS = 2500;
+
+function loadWithRetry<T>(
+  fn: () => Promise<T>,
+  onOk: (v: T) => void,
+  onFail: () => void,
+): () => void {
+  let cancelled = false;
+  let attempts = 0;
+  const tick = () => {
+    fn()
+      .then((v) => {
+        if (!cancelled) onOk(v);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        attempts += 1;
+        if (attempts < COLD_START_RETRIES) window.setTimeout(tick, COLD_START_DELAY_MS);
+        else onFail();
+      });
+  };
+  tick();
+  return () => {
+    cancelled = true;
+  };
+}
+
 const MODE_LABELS: Record<SessionMode, string> = {
   c2c: "채팅·채팅 (조용히)",
   c2s: "채팅·음성 (헬스장)",
@@ -51,11 +81,18 @@ export function Settings() {
   const [defaultMode, setDefaultMode] = useState<SessionMode>(readDefaultMode);
   const [reset, setReset] = useState<ResetStatus>({ kind: "idle" });
 
-  useEffect(() => {
-    getHealth()
-      .then(setHealth)
-      .catch(() => setHealthError(true));
-  }, []);
+  useEffect(
+    () =>
+      loadWithRetry(
+        getHealth,
+        (v) => {
+          setHealth(v);
+          setHealthError(false);
+        },
+        () => setHealthError(true),
+      ),
+    [],
+  );
 
   const runReset = async (scope: "history" | "all") => {
     const prompt =
@@ -114,7 +151,14 @@ export function Settings() {
           <div className="flex flex-col gap-2 rounded-lg bg-slate-800 p-3">
             <StatusRow label="백엔드" ok={health.backend} />
             {(Object.keys(ADAPTER_LABELS) as ("llm" | "stt" | "tts")[]).map((key) => (
-              <StatusRow key={key} label={ADAPTER_LABELS[key]} ok={health.adapters[key]} />
+              <StatusRow
+                key={key}
+                label={ADAPTER_LABELS[key]}
+                ok={health.adapters[key]}
+                // ADR-030: idle 엔 모델이 안 떠 있는 게 정상 — 빨강 "사용 불가" 대신
+                // "대기 중"으로 표기해 오해를 막는다. 세션 시작 시 로드된다.
+                idle={!health.models_loaded}
+              />
             ))}
           </div>
         )}
@@ -179,11 +223,17 @@ function NotificationSection() {
   const [s, setS] = useState<NotificationSettings | null>(null);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
-    getNotificationSettings()
-      .then(setS)
-      .catch(() => setError(true));
-  }, []);
+  const load = () =>
+    loadWithRetry(
+      getNotificationSettings,
+      (v) => {
+        setS(v);
+        setError(false);
+      },
+      () => setError(true),
+    );
+
+  useEffect(() => load(), []);
 
   const patch = async (
     p: Partial<Omit<NotificationSettings, "poll_interval_sec" | "catchup_minutes">>,
@@ -202,6 +252,16 @@ function NotificationSection() {
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">알림</h2>
         <p className="text-sm text-rose-400">알림 설정을 불러올 수 없습니다.</p>
+        <button
+          type="button"
+          onClick={() => {
+            setError(false);
+            load();
+          }}
+          className="self-start rounded bg-slate-700 px-3 py-1 text-sm"
+        >
+          다시 시도
+        </button>
       </section>
     );
   }
@@ -344,11 +404,17 @@ function MuteRow({
   );
 }
 
-function StatusRow({ label, ok }: { label: string; ok: boolean }) {
+function StatusRow({ label, ok, idle = false }: { label: string; ok: boolean; idle?: boolean }) {
+  // idle(세션 전, 모델 미로드)은 오류가 아니라 정상 대기 상태 — 노랑/회색으로 구분.
+  const { cls, text } = ok
+    ? { cls: "text-emerald-400", text: "정상" }
+    : idle
+      ? { cls: "text-amber-400", text: "대기 중 (세션 시작 시 로드)" }
+      : { cls: "text-rose-400", text: "사용 불가" };
   return (
     <div className="flex items-center justify-between">
       <span>{label}</span>
-      <span className={ok ? "text-emerald-400" : "text-rose-400"}>{ok ? "정상" : "사용 불가"}</span>
+      <span className={cls}>{text}</span>
     </div>
   );
 }
