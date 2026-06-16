@@ -71,7 +71,7 @@ class SessionRepository:
         ws = await self.get_by_id(session_id)
         if ws is None:
             return None
-        ws.status = SessionStatus.active
+        ws.status = SessionStatus.in_progress
         ws.ended_at = None
         self._session.add(ws)
         await self._session.commit()
