@@ -144,13 +144,21 @@ class ModelManager:
         tts: Qwen3TTSClient | None,
         llm: OllamaClient | None,
     ) -> None:
-        """Release model objects + reclaim CUDA memory (spike_vram_lifecycle pattern)."""
+        """Release model objects + reclaim CUDA memory.
+
+        ★ in-process 누수 fix: ws_voice 가 STT/TTS 어댑터를 로컬·Pipecat 서비스·pipeline·
+        worker·클로저로 잡고 있어, 여기서 ``del`` + ``empty_cache`` 만 하면 어댑터 객체가
+        살아남아 torch 모델이 안 풀린다(프로세스 종료 시에만 반환되던 누수). 그래서 각
+        어댑터의 ``release()`` 로 **내부 무거운 모델을 직접 null** 해 참조가 남아도 VRAM 이
+        회수되게 한다(spike 는 어댑터를 통째로 버려 PASS 였지만 실세션엔 참조가 남음)."""
         if llm is not None:
             await llm.unload()  # Ollama keep_alive=0
-        # TTS holds a dedicated CUDA-graph executor thread — shut it down first so
-        # no generation is mid-flight when we drop the model + empty the cache.
-        if tts is not None and hasattr(tts, "_executor"):
-            tts._executor.shutdown(wait=True)  # noqa: SLF001
+        for name, adapter in (("tts", tts), ("stt", stt)):
+            if adapter is not None and hasattr(adapter, "release"):
+                try:
+                    adapter.release()
+                except Exception as e:  # noqa: BLE001 — reclamation is best-effort
+                    logger.warning("{} release failed: {}", name, e)
         del stt, tts, llm
         gc.collect()
         self._empty_cuda_cache()

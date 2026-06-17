@@ -40,10 +40,24 @@ class _FakeExecutor:
 class _FakeTTS:
     def __init__(self) -> None:
         self._executor = _FakeExecutor()
+        self._model = object()
+        self.released = False
+
+    def release(self) -> None:
+        # 실제 어댑터처럼: executor 종료 + 무거운 모델 드롭(VRAM 회수 — in-process 누수 fix).
+        self._executor.shutdown(wait=True)
+        self._model = None
+        self.released = True
 
 
 class _FakeSTT:
-    pass
+    def __init__(self) -> None:
+        self._model = object()
+        self.released = False
+
+    def release(self) -> None:
+        self._model = None
+        self.released = True
 
 
 @pytest.fixture
@@ -109,7 +123,7 @@ async def test_concurrent_load_loads_once(fakes: dict) -> None:
 async def test_unload_reclaims_and_resets(fakes: dict) -> None:
     mgr = _manager()
     await mgr.load()
-    llm, tts = fakes["llm"], fakes["tts"]
+    llm, tts, stt = fakes["llm"], fakes["tts"], fakes["stt"]
 
     await mgr.unload()
 
@@ -117,6 +131,9 @@ async def test_unload_reclaims_and_resets(fakes: dict) -> None:
     assert mgr.stt is None and mgr.tts is None and mgr.llm is None
     assert llm.unloads == 1  # Ollama keep_alive=0
     assert tts._executor.shutdowns == 1  # CUDA-graph thread shut down
+    # ★ 누수 fix: 어댑터 내부 모델까지 release 로 드롭(참조가 남아도 VRAM 회수).
+    assert tts.released and tts._model is None
+    assert stt.released and stt._model is None
 
 
 @pytest.mark.asyncio

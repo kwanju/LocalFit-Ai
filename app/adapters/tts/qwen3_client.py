@@ -118,6 +118,19 @@ class Qwen3TTSClient:
         self._executor.submit(self._warmup).result()
         logger.info("Qwen3-TTS ready: {} sample_rate={}", model_id, _OUTPUT_SAMPLE_RATE)
 
+    def release(self) -> None:
+        """Drop the heavy TTS model + CUDA-graph executor so VRAM is reclaimable
+        even if this adapter object is still referenced (Pipecat service/pipeline
+        hold it during session teardown). ``del`` on ModelManager alone can't free
+        it then — the model must be dereferenced here. Idempotent (ADR-030)."""
+        try:
+            self._executor.shutdown(wait=True)
+        except Exception as e:  # noqa: BLE001 — best-effort reclamation
+            logger.warning("Qwen3-TTS executor shutdown failed: {}", e)
+        # FasterQwen3TTS(+CUDA graphs) 를 놓아준다 → gc + empty_cache 가 VRAM 회수.
+        self._model = None
+        self._ready = False
+
     @staticmethod
     def _validate_config(qwen_cfg: dict) -> tuple[str, str, str, str, str]:
         """Validate the `tts.qwen3` config dict and return the fields needed for load."""

@@ -92,6 +92,12 @@ class FasterWhisperClient:
         # first 32kHz transcription doesn't blow the per-request budget.
         import librosa  # noqa: F401
 
+    def release(self) -> None:
+        """Drop the WhisperModel so VRAM is reclaimable even if this adapter is
+        still referenced by a Pipecat service during teardown (ADR-030). ctranslate2
+        frees its CUDA memory on the model's GC. Idempotent."""
+        self._model = None
+
     @property
     def target_sample_rate(self) -> int:
         return self._target_sr
