@@ -33,7 +33,7 @@ describe("CalendarSection", () => {
     m.connect.mockResolvedValue({ enabled: true, connected: true });
     render(<CalendarSection />);
 
-    const btn = await screen.findByText(/연동하기/);
+    const btn = await screen.findByRole("button", { name: /연동하기/ });
     fireEvent.click(btn);
 
     expect(m.connect).toHaveBeenCalledTimes(1);

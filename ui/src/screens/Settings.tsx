@@ -370,6 +370,78 @@ function _fmtEvent(e: GcalProposedEvent): string {
   return `${when} · ${e.exercise}`;
 }
 
+// 최초 1회 OAuth 자격증명 발급 안내(앱 신분증 = google_client_secret.json). 로그인으로
+// 못 받고 Google Cloud Console 등록이 필요 — 단계별 + 링크. 연동 실패 시 자동 펼침.
+function GcalSetupGuide({ openByDefault }: { openByDefault: boolean }) {
+  return (
+    <details open={openByDefault} className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+      <summary className="cursor-pointer text-sm font-medium text-slate-200">
+        처음 연동하시나요? 설정 방법 (1회, 약 5분)
+      </summary>
+      <div className="mt-2 flex flex-col gap-2 text-xs text-slate-300">
+        <p className="text-slate-400">
+          캘린더 연동엔 앱을 Google에 1회 등록한 "신분증" 파일이 필요해요(로그인만으론 안 됩니다).
+        </p>
+        <ol className="flex list-decimal flex-col gap-1.5 pl-4">
+          <li>
+            <a
+              href="https://console.cloud.google.com/projectcreate"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-400 underline"
+            >
+              Google Cloud Console
+            </a>
+            에서 프로젝트 생성(또는 기존 선택)
+          </li>
+          <li>
+            <a
+              href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-400 underline"
+            >
+              Google Calendar API
+            </a>{" "}
+            사용 설정
+          </li>
+          <li>
+            <a
+              href="https://console.cloud.google.com/apis/credentials/consent"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-400 underline"
+            >
+              OAuth 동의 화면
+            </a>{" "}
+            → 외부(External) → <b>테스트 사용자에 본인 Google 계정 추가</b> (필수)
+          </li>
+          <li>
+            <a
+              href="https://console.cloud.google.com/apis/credentials"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-400 underline"
+            >
+              사용자 인증 정보
+            </a>{" "}
+            → 만들기 → OAuth 클라이언트 ID → 유형 <b>데스크톱 앱</b> → JSON 다운로드
+          </li>
+          <li>
+            다운로드한 파일을 프로젝트 루트에{" "}
+            <code className="rounded bg-slate-800 px-1">google_client_secret.json</code> 이름으로 저장
+          </li>
+          <li>백엔드(서버) 재시작 후 위 "연동하기"를 다시 누르기</li>
+        </ol>
+        <p className="text-amber-400/90">
+          ⚠️ 클라이언트 유형은 반드시 <b>데스크톱 앱</b>, 동의 화면 <b>테스트 사용자에 본인 계정</b>을
+          꼭 추가하세요(빠지면 동의가 거부됩니다).
+        </p>
+      </div>
+    </details>
+  );
+}
+
 export function CalendarSection() {
   const [status, setStatus] = useState<GcalStatus | null>(null);
   const [error, setError] = useState(false);
@@ -477,6 +549,7 @@ export function CalendarSection() {
               >
                 {busy === "connect" ? "브라우저에서 동의해 주세요…" : "Google Calendar 연동하기"}
               </button>
+              <GcalSetupGuide openByDefault={msg !== null} />
             </>
           ) : (
             <>
