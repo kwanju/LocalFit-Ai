@@ -29,6 +29,66 @@ REPO = Path(__file__).resolve().parent.parent
 HEALTH = "http://127.0.0.1:8000/health"
 
 
+# ── DB 직접 접근(setup 정리 + postcheck 단정) ──────────────────────────────
+# 백엔드와 같은 SQLite(data/localfit.db)를 읽고/지운다. mock 이 아니라 실제 기록을 확인해
+# "테스트는 통과하는데 실제론 안 되는" 간극을 메운다.
+_db_ready = False
+
+
+async def _ensure_db() -> None:
+    global _db_ready
+    if not _db_ready:
+        from app.db.engine import init_db
+
+        await init_db()
+        _db_ready = True
+
+
+async def _clear(*, sessions: bool = False, baselines: bool = False, memory: bool = False) -> None:
+    await _ensure_db()
+    from sqlalchemy import delete
+
+    from app.db.engine import create_db_session
+    from app.db.models import (
+        ConditionLog,
+        FitnessBaseline,
+        MemoryFact,
+        SetLog,
+        UserMemory,
+        WorkoutSession,
+    )
+
+    async with create_db_session() as db:
+        if memory:
+            await db.execute(delete(UserMemory))
+            await db.execute(delete(MemoryFact))
+        if baselines:
+            await db.execute(delete(FitnessBaseline))
+        if sessions:
+            await db.execute(delete(SetLog))
+            await db.execute(delete(ConditionLog))
+            await db.execute(delete(WorkoutSession))
+        await db.commit()
+
+
+async def _constraints() -> list:
+    await _ensure_db()
+    from app.db.engine import create_db_session
+    from app.db.repositories import MemoryRepository
+
+    async with create_db_session() as db:
+        return await MemoryRepository(db).get_constraints()
+
+
+async def _baselines() -> list:
+    await _ensure_db()
+    from app.db.engine import create_db_session
+    from app.db.repositories import MemoryRepository
+
+    async with create_db_session() as db:
+        return await MemoryRepository(db).get_baseline()
+
+
 # ── 백엔드 관리 ────────────────────────────────────────────────────────────
 def _health_ok() -> bool:
     try:
@@ -77,11 +137,16 @@ Check = tuple[str, bool, bool]
 
 
 def _bringup(r: dict) -> list[Check]:
+    opener = _joined(r["opener_texts"])
+    # opener 가 LLM 실패 fallback(MSG_COACHING_UNAVAILABLE) 이면 텍스트는 왔어도 진짜
+    # 인사가 아니다 — soft 로 표시해 간헐적 opener 실패를 정직하게 드러낸다.
+    real_opener = bool(opener) and "코치 연결에 문제" not in opener
     return [
         ("WS 연결", r["connected"], False),
         ("에러 없음(모델 로드 성공)", r["error"] is None, False),
         ("session_started 수신", r["session_started"], False),
         ("코치 인사(opener) 수신", len(r["opener_texts"]) > 0, False),
+        ("opener 가 LLM 실패 fallback 아님", real_opener, True),
     ]
 
 
@@ -120,6 +185,43 @@ def _check_mode_switch(r: dict) -> list[Check]:
     ]
 
 
+def _check_replied(r: dict) -> list[Check]:
+    return [*_bringup(r), ("사용자 발화에 코치 응답", len(r["reply_texts"]) > 0, False)]
+
+
+def _check_safety_tone(r: dict) -> list[Check]:
+    reply = _joined(r["opener_texts"] + r["reply_texts"])
+    nag = any(k in reply for k in ("전문의", "의료", "면책", "무리하지", "보수적으로"))
+    return [*_bringup(r), ("안전 잔소리/면책 문구 없음(ADR-033)", not nag, True)]
+
+
+# ── async postcheck (실 DB 단정) ───────────────────────────────────────────
+async def _post_injury_recorded(r: dict) -> list[Check]:
+    cons = await _constraints()
+    return [
+        ("코치 응답 수신", len(r["reply_texts"]) > 0, False),
+        ("실제 통증→1층 제약 저장(안전 회귀)", len(cons) > 0, False),
+    ]
+
+
+async def _post_constraint_shoulder(r: dict) -> list[Check]:
+    cons = await _constraints()
+    has = len(cons) > 0
+    shoulder = any("어깨" in getattr(c, "text", "") for c in cons)
+    return [
+        ("부상 발화→제약 저장(ADR-025)", has, False),
+        ("제약 텍스트에 '어깨'", shoulder, True),
+    ]
+
+
+async def _post_baseline_saved(r: dict) -> list[Check]:
+    bl = await _baselines()
+    return [
+        ("응답 수신(정지 안 함, B#5)", len(r["reply_texts"]) > 0, False),
+        ("자가보고→기준선 저장(ADR-028)", len(bl) > 0, True),
+    ]
+
+
 SCENARIOS = {
     "c2c_opener": dict(desc="C2C 세션 브링업+인사", mode="C2C", check=_bringup),
     "self_report": dict(
@@ -135,13 +237,40 @@ SCENARIOS = {
     ),
     "c2s_opener": dict(desc="C2S 세션 브링업+인사", mode="C2S", check=_bringup),
     "s2s_opener": dict(desc="S2S 브링업(음성 입력 없이 로드+인사)", mode="S2S", check=_bringup),
+    "injury_intercept": dict(
+        desc="실제 통증은 여전히 가로채 제약 저장(안전 회귀)", mode="C2C",
+        setup=lambda: _clear(memory=True), say="무릎이 아파요",
+        check=_check_replied, postcheck=_post_injury_recorded,
+    ),
+    "memory_constraint": dict(
+        desc="부상 발화→1층 제약 저장(ADR-025/phase2)", mode="C2C",
+        setup=lambda: _clear(memory=True), say="왼쪽 어깨가 아파서 오늘 무리 못 해",
+        check=_check_replied, postcheck=_post_constraint_shoulder,
+    ),
+    "first_session_baseline": dict(
+        desc="첫 세션 자가보고→기준선(ADR-028, 정지 방지 B#5)", mode="C2C",
+        setup=lambda: _clear(sessions=True, baselines=True, memory=True),
+        say=[
+            "푸시업 15개, 스쿼트 20개 할 수 있어. 그걸 기준으로 잡아줘",
+            "응 맞아, 그렇게 저장해줘",
+        ],
+        check=_check_replied, postcheck=_post_baseline_saved,
+    ),
+    "safety_tone": dict(
+        desc="평소 안전 잔소리 없음(ADR-033)", mode="C2C",
+        say="좋아 바로 시작하자", check=_check_safety_tone,
+    ),
 }
 
 
 async def _run_one(name: str, spec: dict, timeout: float) -> tuple[bool, list[Check]]:
     print(f"\n── [{name}] {spec['desc']} ──")
+    if spec.get("setup"):
+        await spec["setup"]()
     r = await run(spec["mode"], spec.get("say"), spec.get("switch"), timeout)
-    checks = spec["check"](r)
+    checks = list(spec["check"](r))
+    if spec.get("postcheck") and not r["error"]:
+        checks += await spec["postcheck"](r)
     for label, ok, soft in checks:
         mark = "✅" if ok else ("ℹ️ " if soft else "❌")
         kind = " (soft)" if soft else ""

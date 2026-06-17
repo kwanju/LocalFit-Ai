@@ -62,11 +62,17 @@ async def _drain(ws, results: dict, *, until: float, label: str) -> None:
                 print(f"  🗣 코치[{label}]: {text}")
 
 
-async def run(mode: str, say: str | None, switch: str | None, timeout: float) -> dict:
+async def run(
+    mode: str,
+    say: str | list[str] | None,
+    switch: str | None,
+    timeout: float,
+) -> dict:
     results: dict = {
         "connected": False, "preparing": False, "session_started": False,
         "error": None, "opener_texts": [], "reply_texts": [], "switch_texts": [],
     }
+    says = [say] if isinstance(say, str) else (say or [])
     url = f"{BASE}?mode={mode.upper()}"
     try:
         async with websockets.connect(url, max_size=None, open_timeout=10) as ws:
@@ -75,10 +81,11 @@ async def run(mode: str, say: str | None, switch: str | None, timeout: float) ->
             # 콜드스타트(모델 로드 ~30s) + 인사까지 대기.
             await _drain(ws, results, until=time.monotonic() + timeout, label="opener")
 
-            if say and results["opener_texts"] and not results["error"]:
-                print(f"  나: {say}")
-                await ws.send(json.dumps({"type": "text", "text": say}))
-                await _drain(ws, results, until=time.monotonic() + 40, label="reply")
+            if says and results["opener_texts"] and not results["error"]:
+                for utterance in says:
+                    print(f"  나: {utterance}")
+                    await ws.send(json.dumps({"type": "text", "text": utterance}))
+                    await _drain(ws, results, until=time.monotonic() + 40, label="reply")
 
             if switch and not results["error"]:
                 # 모드 전환 = resume 재연결(프론트 switchMode 와 동일하게 resume=1).
