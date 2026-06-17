@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalFit AI v4 — 검증 현황 & 수동 검증 체크리스트</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#1a1d24; --card2:#21252e; --ink:#e8eaed; --mut:#9aa3b2;
+    --line:#2c313c; --acc:#5b8cff; --ok:#3fb950; --warn:#d29922; --danger:#f85149; --chip:#2a2f3a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"Segoe UI",Roboto,"Malgun Gothic",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 120px;}
+  h1{font-size:25px;margin:0 0 4px;letter-spacing:-.3px}
+  .sub{color:var(--mut);margin:0 0 8px}
+  .meta{color:var(--mut);font-size:13px;margin-bottom:22px}
+  .meta code{background:var(--chip);padding:1px 6px;border-radius:5px;color:#cdd6e6}
+  a{color:var(--acc)}
+  h2.sec{font-size:19px;margin:30px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+  .bar{position:sticky;top:0;z-index:5;background:rgba(15,17,21,.92);backdrop-filter:blur(6px);
+       border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px}
+  .bar .track{flex:1;height:10px;background:#272c36;border-radius:6px;overflow:hidden}
+  .bar .fill{height:100%;width:0;background:linear-gradient(90deg,#3fb950,#5b8cff);transition:width .3s}
+  .bar b{font-variant-numeric:tabular-nums}
+  .bar button{background:var(--chip);color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+  .bar button:hover{color:var(--ink)}
+  .barnote{font-size:12px;color:var(--mut);margin:0 0 22px}
+
+  .phase{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:16px;background:var(--card)}
+  .phead{padding:13px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);background:var(--card2)}
+  .tag{font-size:12px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px;white-space:nowrap}
+  .t-auto{background:#16331f;color:#7ee2a0}
+  .t-human{background:#3a2f22;color:#f0c479}
+  .t-ext{background:#22343f;color:#7fd0ff}
+  .phead h3{font-size:16px;margin:0;flex:1}
+  .phead .adr{font-size:12px;color:var(--mut)}
+  .pbody{padding:15px 18px}
+  .why{color:var(--mut);font-size:13.5px;margin:0 0 12px;padding-left:12px;border-left:3px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:4px 0}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.r{color:var(--ok);white-space:nowrap;font-weight:600}
+  pre{background:#0c0e12;border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;font:12.5px/1.5 "Cascadia Code",Consolas,monospace;color:#d7dee9;margin:8px 0}
+  code{font-family:"Cascadia Code",Consolas,monospace}
+  .steps{margin:0 0 12px}
+  .steps h4,.checks h4{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin:12px 0 8px}
+  ol.steps-list{margin:0;padding-left:20px}ol.steps-list li{margin:4px 0}
+  .checks{background:#15181e;border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-top:8px}
+  label.chk{display:flex;gap:10px;align-items:flex-start;padding:6px 4px;border-radius:6px;cursor:pointer}
+  label.chk:hover{background:#1c2027}
+  label.chk input{margin-top:3px;width:17px;height:17px;accent-color:var(--ok);flex:none}
+  label.chk.done span{color:var(--mut);text-decoration:line-through}
+  .why-human{font-size:12px;color:var(--warn);background:#241d10;border:1px solid #3a2f15;border-radius:7px;padding:6px 10px;margin:0 0 10px}
+  .note{font-size:12.5px;color:var(--mut);background:#15181e;border:1px solid var(--line);border-radius:8px;padding:8px 11px;margin-top:10px}
+  footer{color:var(--mut);font-size:12.5px;text-align:center;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LocalFit AI v4 — 검증 현황 & 수동 검증 체크리스트</h1>
+  <p class="sub">자동 검증으로 끝낸 것(§A) + 사람·하드웨어만 가능한 남은 항목(§C)을 분리</p>
+  <p class="meta">기준: <code>v4-rewrite</code> @ <code>7815a33</code> (push 완료, 2026-06-17) · 자동 검증 하니스 = <code>scripts/verify_scenarios.py</code> · <code>verify_vram.py</code> · 단위/ollama/UI 테스트</p>
+
+  <div class="bar">
+    <span>남은 수동 검증</span>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <b id="count">0 / 0</b>
+    <button onclick="resetAll()">초기화</button>
+  </div>
+  <p class="barnote">진행바는 <b>§C(사람만 가능) 항목</b>만 셉니다 — §A는 이미 자동 통과라 체크 대상이 아닙니다.</p>
+
+  <!-- ============ A. 자동 검증 완료 ============ -->
+  <h2 class="sec">A. 자동 검증 완료 — 사람이 안 해도 됨 ✅</h2>
+  <div class="phase">
+    <div class="phead"><span class="tag t-auto">AUTO</span><h3>실세션 시나리오 스위트 (11개 전부 PASS)</h3></div>
+    <div class="pbody">
+      <p class="why">실제 백엔드 + 실제 GPU 모델 로드 + 실제 DB로 구동. 단위 테스트(mock)가 못 잡던 이음새까지 검증. 코드 변경 후 언제든 재실행.</p>
+      <table>
+        <tr><th>시나리오</th><th>검증 내용</th><th>관련</th><th></th></tr>
+        <tr><td>c2c/c2s/s2s_opener</td><td>3모드 모델 로드 + 능동 인사</td><td>ADR-021/030</td><td class="r">PASS</td></tr>
+        <tr><td>self_report</td><td>"스쿼트 50개"→기준선 50 유지(안 깎음)</td><td>ADR-032</td><td class="r">PASS</td></tr>
+        <tr><td>condition</td><td>피로 발화→완화 응답(안전 오인터셉트 안 됨)</td><td>ADR-023/033</td><td class="r">PASS</td></tr>
+        <tr><td>mode_switch</td><td>모드 전환 시 같은 세션 이어받기·opener 미발화</td><td>버그 B#6</td><td class="r">PASS</td></tr>
+        <tr><td>injury_intercept</td><td>"무릎 아파"→가로채기 + 1층 제약 저장(안전 회귀)</td><td>safety</td><td class="r">PASS</td></tr>
+        <tr><td>memory_constraint</td><td>부상 발화→1층 제약 저장</td><td>ADR-025</td><td class="r">PASS</td></tr>
+        <tr><td>first_session_baseline</td><td>🔰 자가보고→기준선 저장, 대화 정지 없음</td><td>ADR-028 / B#5</td><td class="r">PASS</td></tr>
+        <tr><td>safety_tone</td><td>평소 안전 잔소리·면책 문구 없음</td><td>ADR-033</td><td class="r">PASS</td></tr>
+      </table>
+      <pre>uv run --with websockets python scripts/verify_scenarios.py                       # 11개 전부
+uv run --with websockets python scripts/verify_scenarios.py --only self_report,mode_switch
+uv run --with websockets python scripts/verify_scenarios.py --external-backend     # 이미 띄운 8000 사용</pre>
+    </div>
+  </div>
+  <div class="phase">
+    <div class="phead"><span class="tag t-auto">AUTO</span><h3>VRAM 라이프사이클 (phase-7) — PASS</h3><span class="adr">ADR-030</span></div>
+    <div class="pbody">
+      <p class="why">nvidia-smi 실측. 누수 버그를 이 하니스가 발견→수정→재검증. idle 복귀 + 반복 세션 누적 0 확인(콜드스타트 ~20s).</p>
+      <table>
+        <tr><th></th><th>idle</th><th>세션 로드</th><th>세션 종료 후</th></tr>
+        <tr><td>수정 후</td><td>3574</td><td>~17.7GB(Δ+14GB)</td><td class="r">+0.7GB ≈ baseline (누수 0)</td></tr>
+      </table>
+      <pre>uv run --with websockets python scripts/verify_vram.py --manage-backend</pre>
+      <p class="note">참고: 측정 전 <code>ollama stop qwen3.5:9b</code>로 상주 LLM을 비워야 idle이 깨끗합니다(keep_alive 30m).</p>
+    </div>
+  </div>
+  <div class="phase">
+    <div class="phead"><span class="tag t-auto">AUTO</span><h3>테스트 게이트</h3></div>
+    <div class="pbody">
+      <pre>uv run pytest --ignore=tests/integration -m "not gpu and not ollama"   # 단위/API 459+
+uv run pytest -m ollama          # qwen3.5:9b 구조화 출력 10
+cd ui && pnpm test && pnpm typecheck && pnpm build                     # UI 23 + 빌드</pre>
+      <p class="note">⚠️ <code>tests/integration/test_roundtrip_3mode.py::test_interrupt_frame_dispatched_through_pipeline</code>은 환경성 hang — <code>--ignore=tests/integration</code> 권장.</p>
+    </div>
+  </div>
+
+  <!-- ============ B. 사전 준비 ============ -->
+  <h2 class="sec">B. 사전 준비 (§C 검증 전 1회)</h2>
+  <div class="phase"><div class="pbody">
+    <table>
+      <tr><th>항목</th><th>확인</th></tr>
+      <tr><td>실행(네이티브)</td><td><code>cd ui ; pnpm tauri dev</code> 또는 설치본 <code>pnpm tauri build</code></td></tr>
+      <tr><td>실행(브라우저 dev)</td><td><code>scripts\dev.bat</code> → localhost:5173 (단, 마이크/toast/트레이는 네이티브 필수)</td></tr>
+      <tr><td>Ollama</td><td><code>ollama list</code>에 <code>qwen3.5:9b</code></td></tr>
+      <tr><td>캘린더(§C-3)</td><td>Google OAuth <b>Desktop</b> client → <code>google_client_secret.json</code> 프로젝트 루트</td></tr>
+    </table>
+  </div></div>
+
+  <!-- ============ C. 사람/하드웨어만 ============ -->
+  <h2 class="sec">C. 사람·하드웨어만 검증 가능 — 남은 항목 ❗</h2>
+
+  <div class="phase">
+    <div class="phead"><span class="tag t-human">C-1</span><h3>빌드 설치본 실행 + 마이크 (Tauri)</h3><span class="adr">phase 6 / S-4</span></div>
+    <div class="pbody">
+      <p class="why-human">GUI 설치본 실행·마이크 오디오·프로세스 종료는 헤드리스로 못 함. <b>[Errno 22] stdio 수정은 cargo check까지 끝났으니, 재빌드 후 실제 실행 확인만 남음.</b></p>
+      <h4>절차</h4>
+      <ol class="steps-list">
+        <li><code>cd ui ; pnpm tauri build</code> (또는 <code>pnpm tauri dev</code>)로 실행</li>
+        <li>채팅 세션 시작 → 코치가 뜨는지 (이전 "코치를 불러오지 못했어" 재현 안 됨)</li>
+        <li>S2S 모드 → 마이크 발화 → STT 인식 → 코치 음성</li>
+        <li>트레이에서 종료 → <code>tasklist | findstr python</code> / <code>findstr uv</code></li>
+      </ol>
+      <div class="checks"><h4>기대 결과</h4>
+        <label class="chk"><input type="checkbox" data-id="c1a"><span>설치본에서 코치 정상 로드(모델 로드 성공, [Errno 22] 없음)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c1b"><span>마이크 권한 프롬프트 없이 캡처 → S2S 발화→STT→코치 음성</span></label>
+        <label class="chk"><input type="checkbox" data-id="c1c"><span>마이크 권한 거부 시 한국어 안내</span></label>
+        <label class="chk"><input type="checkbox" data-id="c1d"><span>앱 종료 후 python/uv 프로세스 0 잔존(트리킬)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c1e"><span>백엔드 강제 종료 시 BackendStatusBanner + 재시작 동작</span></label>
+      </div>
+      <p class="note">⚠️ 별개 한계: <code>repo_root()</code>가 컴파일 타임 경로라 설치본을 <b>다른 머신</b>에 배포하면 동작 안 함(ADR-031 번들 후순위). 본인 머신에선 OK.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phead"><span class="tag t-human">C-2</span><h3>능동 알림 — 네이티브 toast</h3><span class="adr">phase 8 / ADR-027</span></div>
+    <div class="pbody">
+      <p class="why-human">Windows 알림 표시·트레이 동작은 시각 확인 필요. (스케줄 <code>/due</code>·<code>/pending</code> 계산 로직은 단위로 커버됨)</p>
+      <h4>절차</h4>
+      <ol class="steps-list">
+        <li>설정 → 알림 켜기 + 운동 시각을 지금+2분, 리드 0~1분</li>
+        <li>창을 트레이로 숨김 → 정시에 toast 관찰</li>
+        <li>앱 열기 → ReminderBanner "지금 시작" → 세션</li>
+        <li>야간 음소거 시간대를 지금으로 → toast 억제 확인</li>
+      </ol>
+      <div class="checks"><h4>기대 결과</h4>
+        <label class="chk"><input type="checkbox" data-id="c2a"><span>정시 native toast 발생(창 숨겨도)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c2b"><span>앱 열기→배너 "지금 시작"→세션 진입(prewarm)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c2c"><span>야간 음소거 toast 억제(배너엔 잔존)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c2d"><span>누락 리마인드(앱 재시작/OS 알림 꺼짐)가 배너에 표시</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phead"><span class="tag t-human">C-3</span><h3>Google Calendar — OAuth 동의</h3><span class="adr">phase 9 / ADR-022</span></div>
+    <div class="pbody">
+      <p class="why-human">브라우저 OAuth 동의 클릭 + 실제 Google 계정 필요. (확답 게이트는 단위로 커버됨) <b>이제 설정 화면 "캘린더" 섹션에서 GUI로 가능</b>(phase v4-9b) — API 직접 호출 불필요.</p>
+      <h4>절차 (앱 → 설정 → 캘린더)</h4>
+      <ol class="steps-list">
+        <li>설정 → 캘린더 → <b>Google Calendar 연동하기</b> → 브라우저 동의</li>
+        <li>"연동됨 ✅" 확인 → <b>이번 주 운동 캘린더에 등록</b> → 미리보기 → <b>N건 등록</b>(확인)</li>
+        <li>Google Calendar 앱/웹에서 이벤트 확인. 앱 재시작 후에도 "연동됨" 유지(자동 갱신)</li>
+      </ol>
+      <div class="checks"><h4>기대 결과</h4>
+        <label class="chk"><input type="checkbox" data-id="c3a"><span>OAuth 동의→토큰 keyring 저장→재시작 후에도 connected(자동 갱신, 평문 파일 0)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c3b"><span>플랜 등록 이벤트가 실제 Google Calendar에 보임(확답 게이트 거침)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c3c"><span>캘린더에 다른 일정 추가 시 코치가 "오늘 빈 시간" 제안</span></label>
+        <label class="chk"><input type="checkbox" data-id="c3d"><span>미연동/오프라인 시 코칭·로컬 스케줄 정상(graceful degrade)</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="phead"><span class="tag t-human">C-4</span><h3>콜드스타트 UI 표시 + 앱-열림 prewarm</h3><span class="adr">phase 6·7 / A 수정분</span></div>
+    <div class="pbody">
+      <p class="why-human">UI 배너/라벨 시각·트레이 재오픈 prewarm은 화면 확인 필요. (디바운스/재시도 로직은 vitest로 커버됨)</p>
+      <div class="checks"><h4>기대 결과</h4>
+        <label class="chk"><input type="checkbox" data-id="c4a"><span>첫 시작/모델 로드 중 "백엔드 연결 끊김" 가짜 배너 안 뜸(3회 디바운스)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c4b"><span>설정 알림이 부팅 중 실패해도 재시도 후 표시(또는 "다시 시도" 버튼)</span></label>
+        <label class="chk"><input type="checkbox" data-id="c4c"><span>설정 LLM/STT/TTS가 세션 전엔 노랑 "대기 중(세션 시작 시 로드)"</span></label>
+        <label class="chk"><input type="checkbox" data-id="c4d"><span>트레이에서 앱 재오픈 시 prewarm 동작 → 다음 세션 시작이 빨라짐</span></label>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    LocalFit AI v4 · 로컬 검증용(미커밋) · 체크 상태는 이 브라우저 localStorage 저장 · §A/§B는 정보, §C만 진행바 집계<br>
+    근거: <code>scripts/verify_*.py</code> · <code>docs/architecture/adr/</code> · 이번 세션 커밋 <code>4eec438…7815a33</code>
+  </footer>
+</div>
+
+<script>
+  const KEY="localfit_v4_verify2";
+  const boxes=[...document.querySelectorAll('input[type=checkbox]')];
+  const saved=JSON.parse(localStorage.getItem(KEY)||"{}");
+  function render(){
+    let done=0;
+    boxes.forEach(b=>{
+      b.checked=!!saved[b.dataset.id];
+      b.closest('label').classList.toggle('done',b.checked);
+      if(b.checked)done++;
+    });
+    document.getElementById('count').textContent=done+" / "+boxes.length;
+    document.getElementById('fill').style.width=(boxes.length?done/boxes.length*100:0)+"%";
+  }
+  boxes.forEach(b=>b.addEventListener('change',()=>{
+    saved[b.dataset.id]=b.checked;localStorage.setItem(KEY,JSON.stringify(saved));render();
+  }));
+  function resetAll(){ if(confirm("모든 체크를 초기화할까요?")){localStorage.removeItem(KEY);for(const k in saved)delete saved[k];render();} }
+  render();
+</script>
+</body>
+</html>

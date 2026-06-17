@@ -4,8 +4,15 @@
 
 import { useEffect, useState } from "react";
 import {
+  type GcalProposedEvent,
+  type GcalStatus,
+  gcalConnect,
+  gcalDisconnect,
+  getGcalStatus,
   getHealth,
   getNotificationSettings,
+  previewPlanEvents,
+  registerPlanEvents,
   updateNotificationSettings,
   type NotificationSettings,
 } from "@/api/client";
@@ -143,6 +150,8 @@ export function Settings() {
       </section>
 
       <NotificationSection />
+
+      <CalendarSection />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">서버 상태</h2>
@@ -346,6 +355,185 @@ function NotificationSection() {
         </fieldset>
         {error && <p className="text-xs text-rose-400">설정 저장 중 오류가 발생했습니다.</p>}
       </div>
+    </section>
+  );
+}
+
+// Google Calendar 연동 (ADR-022, phase v4-9b). ADR-020 로컬 히트맵과 무관.
+// 최초 OAuth 연동은 음성으로 못 하므로 여기 버튼이 유일한 진입점이다. 등록은 미리보기→
+// 확인 2단계(확답 게이트, 자동 등록 금지). 미연동/오프라인이면 코칭엔 영향 없음(degrade).
+function _fmtEvent(e: GcalProposedEvent): string {
+  const d = new Date(e.start);
+  const when = d.toLocaleString("ko-KR", {
+    month: "numeric", day: "numeric", weekday: "short", hour: "numeric", minute: "2-digit",
+  });
+  return `${when} · ${e.exercise}`;
+}
+
+export function CalendarSection() {
+  const [status, setStatus] = useState<GcalStatus | null>(null);
+  const [error, setError] = useState(false);
+  const [busy, setBusy] = useState<null | "connect" | "disconnect" | "preview" | "register">(null);
+  const [preview, setPreview] = useState<GcalProposedEvent[] | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = () =>
+    loadWithRetry(
+      getGcalStatus,
+      (v) => {
+        setStatus(v);
+        setError(false);
+      },
+      () => setError(true),
+    );
+  useEffect(() => load(), []);
+
+  const connect = async () => {
+    setBusy("connect");
+    setMsg(null);
+    try {
+      setStatus(await gcalConnect());
+    } catch {
+      setMsg("연동에 실패했어요. 자격증명(google_client_secret.json)과 브라우저 동의를 확인해 주세요.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy("disconnect");
+    setPreview(null);
+    setMsg(null);
+    try {
+      setStatus(await gcalDisconnect());
+    } catch {
+      /* 무시 — 상태는 다음 로드로 보정 */
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doPreview = async () => {
+    setBusy("preview");
+    setMsg(null);
+    try {
+      setPreview(await previewPlanEvents());
+    } catch {
+      setMsg("미리보기를 불러오지 못했어요.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doRegister = async () => {
+    setBusy("register");
+    try {
+      const r = await registerPlanEvents();
+      setMsg(r.created > 0 ? `${r.created}건을 캘린더에 등록했어요.` : "등록할 항목이 없었어요.");
+      setPreview(null);
+    } catch {
+      setMsg("등록에 실패했어요.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-lg font-semibold">캘린더</h2>
+      <p className="text-xs text-slate-500">
+        Google Calendar에 운동 일정을 등록하고, 다른 일정을 읽어 빈 시간을 추천받아요. 연동 안 해도
+        코칭은 정상 동작합니다.
+      </p>
+
+      {error && !status ? (
+        <div className="flex flex-col gap-2 rounded-lg bg-slate-800 p-3">
+          <p className="text-sm text-rose-400">연동 상태를 불러올 수 없습니다.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setError(false);
+              load();
+            }}
+            className="self-start rounded bg-slate-700 px-3 py-1 text-sm"
+          >
+            다시 시도
+          </button>
+        </div>
+      ) : !status ? (
+        <p className="text-sm text-slate-400">불러오는 중…</p>
+      ) : !status.enabled ? (
+        <p className="text-sm text-slate-400">캘린더 연동이 설정(config)에서 비활성화되어 있어요.</p>
+      ) : (
+        <div className="flex flex-col gap-3 rounded-lg bg-slate-800 p-3">
+          {!status.connected ? (
+            <>
+              <span className="text-sm text-slate-300">연동되지 않음</span>
+              <button
+                type="button"
+                onClick={() => void connect()}
+                disabled={busy === "connect"}
+                className="self-start rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {busy === "connect" ? "브라우저에서 동의해 주세요…" : "Google Calendar 연동하기"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-emerald-400">연동됨 ✅</span>
+                <button
+                  type="button"
+                  onClick={() => void disconnect()}
+                  disabled={busy === "disconnect"}
+                  className="rounded bg-slate-700 px-3 py-1 text-xs disabled:opacity-50"
+                >
+                  연동 해제
+                </button>
+              </div>
+
+              {preview === null ? (
+                <button
+                  type="button"
+                  onClick={() => void doPreview()}
+                  disabled={busy === "preview"}
+                  className="self-start rounded bg-slate-700 px-3 py-1.5 text-sm disabled:opacity-50"
+                >
+                  {busy === "preview" ? "불러오는 중…" : "이번 주 운동 캘린더에 등록"}
+                </button>
+              ) : preview.length === 0 ? (
+                <p className="text-sm text-slate-400">등록할 주간 플랜이 없어요. 먼저 목표를 정해보세요.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <ul className="flex flex-col gap-1 text-sm text-slate-300">
+                    {preview.map((e, i) => (
+                      <li key={i}>• {_fmtEvent(e)}</li>
+                    ))}
+                  </ul>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void doRegister()}
+                      disabled={busy === "register"}
+                      className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                    >
+                      {busy === "register" ? "등록 중…" : `${preview.length}건 등록`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreview(null)}
+                      className="rounded bg-slate-700 px-3 py-1.5 text-sm"
+                    >
+                      취소
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {msg && <p className="text-xs text-slate-400">{msg}</p>}
+        </div>
+      )}
     </section>
   );
 }

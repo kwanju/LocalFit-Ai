@@ -25,9 +25,9 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -141,5 +141,50 @@ export function updateNotificationSettings(
   return request<NotificationSettings>("/schedule/settings", {
     method: "PUT",
     body: JSON.stringify(patch),
+  });
+}
+
+// ── Google Calendar (ADR-022, phase v4-9b) ────────────────────────────────
+// ⚠️ ADR-020 로컬 히트맵(api/calendar.ts, /api/calendar)과 다른 외부 연동. 섞지 말 것.
+export interface GcalStatus {
+  enabled: boolean;
+  connected: boolean;
+}
+
+export interface GcalProposedEvent {
+  exercise: string;
+  start: string; // ISO
+  end: string;
+  summary: string;
+}
+
+export interface GcalRegisterResult {
+  created: number;
+  skipped: number;
+  events: GcalProposedEvent[];
+}
+
+export function getGcalStatus(): Promise<GcalStatus> {
+  return request<GcalStatus>("/api/gcal/status");
+}
+
+/** OAuth 동의는 브라우저에서 진행되며 수십 초 블로킹 → 긴 타임아웃(기본 8s 로는 중단됨). */
+export function gcalConnect(): Promise<GcalStatus> {
+  return request<GcalStatus>("/api/gcal/connect", { method: "POST" }, 180_000);
+}
+
+export function gcalDisconnect(): Promise<GcalStatus> {
+  return request<GcalStatus>("/api/gcal/disconnect", { method: "POST" });
+}
+
+export function previewPlanEvents(): Promise<GcalProposedEvent[]> {
+  return request<GcalProposedEvent[]>("/api/gcal/plan/preview", { method: "POST" });
+}
+
+/** 확답 게이트(ADR-022/013): 버튼 클릭 = 사용자 확인 → 항상 confirm=true. */
+export function registerPlanEvents(): Promise<GcalRegisterResult> {
+  return request<GcalRegisterResult>("/api/gcal/plan/register", {
+    method: "POST",
+    body: JSON.stringify({ confirm: true }),
   });
 }
