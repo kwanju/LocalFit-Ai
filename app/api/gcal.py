@@ -11,8 +11,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.config import GoogleCalendarConfig
@@ -84,6 +85,90 @@ async def gaps(request: Request) -> GapsOut:
     connected = await svc.is_connected()
     hint = await svc.today_gap_hint() if connected else None
     return GapsOut(connected=connected, hint=hint)
+
+
+# ── 경량 CRUD: 내 일정 보기/추가/삭제 (ADR-034) ────────────────────────────
+# ⚠️ 운동 플랜 등록(/plan/*)의 확답 게이트와 별개다. 여기는 사용자가 기록 탭에서 직접
+# 누르는 명시 액션이라 즉시 반영한다(미리보기 단계 없음).
+
+
+class CalEventOut(BaseModel):
+    id: str
+    summary: str
+    start: str  # ISO (종일이면 날짜 자정)
+    end: str
+    all_day: bool
+
+
+class EventsOut(BaseModel):
+    connected: bool  # 미연동이면 events=[] + connected=false → UI 가 연동 안내로 degrade
+    events: list[CalEventOut]
+
+
+@router.get("/events")
+async def list_events(
+    request: Request,
+    from_: str = Query(alias="from"),
+    to: str = Query(alias="to"),
+) -> EventsOut:
+    """``from``~``to``(ISO) 구간의 전체 일정. 미연동/오류면 빈 목록 + connected=false."""
+    try:
+        time_min = datetime.fromisoformat(from_)
+        time_max = datetime.fromisoformat(to)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="from/to 는 ISO 날짜·시각이어야 합니다.") from e
+    svc = _service(request)
+    connected = await svc.is_connected()
+    events = await svc.list_events(time_min, time_max) if connected else []
+    return EventsOut(
+        connected=connected,
+        events=[
+            CalEventOut(
+                id=e.event_id,
+                summary=e.summary,
+                start=e.start.isoformat(),
+                end=e.end.isoformat(),
+                all_day=e.all_day,
+            )
+            for e in events
+        ],
+    )
+
+
+class CreateEventRequest(BaseModel):
+    summary: str
+    start: str  # ISO 시작 시각
+    duration_min: int = 30
+
+
+@router.post("/events")
+async def create_event(body: CreateEventRequest, request: Request) -> CalEventOut:
+    """사용자가 기록 탭에서 직접 잡는 일정 생성(명시 액션 = 즉시 반영, ADR-034)."""
+    cfg = _gcal_config(request)
+    if not cfg.enabled:
+        raise HTTPException(status_code=400, detail="캘린더 연동이 비활성화되어 있습니다.")
+    try:
+        start = datetime.fromisoformat(body.start)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="start 는 ISO 날짜·시각이어야 합니다.") from e
+    summary = body.summary.strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="일정 제목을 입력해 주세요.")
+    event_id = await _service(request).create_event(summary, start, body.duration_min)
+    if event_id is None:
+        raise HTTPException(status_code=400, detail="캘린더에 연동되어 있지 않습니다.")
+    end = start + timedelta(minutes=max(5, body.duration_min))
+    return CalEventOut(
+        id=event_id, summary=summary, start=start.isoformat(), end=end.isoformat(), all_day=False
+    )
+
+
+@router.delete("/events/{event_id}", status_code=204)
+async def delete_event(event_id: str, request: Request) -> None:
+    """일정 삭제. 미연동/오류면 400(UI 가 안내). 성공은 204."""
+    ok = await _service(request).delete_event(event_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="일정을 삭제하지 못했습니다.")
 
 
 class ProposedEventOut(BaseModel):

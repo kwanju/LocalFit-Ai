@@ -52,6 +52,9 @@ class _FakeClient:
         self.inserted: list[tuple] = []
         self.busy: list[tuple[datetime, datetime]] = []
         self.workout_starts: list[datetime] = []
+        self.inserted_plain: list[tuple] = []
+        self.deleted: list[str] = []
+        self.events: list = []
 
     def insert_workout_event(self, start, end, summary, description=None) -> str:
         self.inserted.append((start, end, summary, description))
@@ -64,6 +67,16 @@ class _FakeClient:
         from app.adapters.calendar.client import WorkoutEvent
 
         return [WorkoutEvent(event_id="x", start=s, summary="운동") for s in self.workout_starts]
+
+    def list_events(self, time_min, time_max):
+        return self.events
+
+    def insert_event(self, start, end, summary) -> str:
+        self.inserted_plain.append((start, end, summary))
+        return f"plain-{len(self.inserted_plain)}"
+
+    def delete_event(self, event_id) -> None:
+        self.deleted.append(event_id)
 
 
 async def _make_active_plan() -> None:
@@ -144,6 +157,96 @@ async def test_today_gap_hint_from_busy(test_db, monkeypatch) -> None:
     svc = CalendarSyncService(GoogleCalendarConfig())
     hint = await svc.today_gap_hint(now=now)
     assert hint == "지금부터 낮 4시까지 비어 있어요"
+
+
+# ── 경량 CRUD: 보기/생성/삭제 (ADR-034) ───────────────────────────────────
+
+
+async def test_list_events_returns_when_connected(test_db, monkeypatch) -> None:
+    from app.adapters.calendar.client import CalEvent
+
+    fake = _FakeClient()
+    fake.events = [
+        CalEvent(
+            event_id="a",
+            summary="헬스장",
+            start=datetime(2026, 6, 17, 18, 0),
+            end=datetime(2026, 6, 17, 19, 0),
+            all_day=False,
+        )
+    ]
+
+    async def _fake_client(self):
+        return fake
+
+    monkeypatch.setattr(CalendarSyncService, "_client", _fake_client)
+    svc = CalendarSyncService(GoogleCalendarConfig())
+    out = await svc.list_events(datetime(2026, 6, 17), datetime(2026, 6, 24))
+    assert len(out) == 1
+    assert out[0].summary == "헬스장"
+
+
+async def test_list_events_empty_when_not_connected(test_db, monkeypatch) -> None:
+    async def _no_client(self):
+        return None
+
+    monkeypatch.setattr(CalendarSyncService, "_client", _no_client)
+    svc = CalendarSyncService(GoogleCalendarConfig())
+    assert await svc.list_events(datetime(2026, 6, 17), datetime(2026, 6, 24)) == []
+
+
+async def test_create_and_delete_event(test_db, monkeypatch) -> None:
+    fake = _FakeClient()
+
+    async def _fake_client(self):
+        return fake
+
+    monkeypatch.setattr(CalendarSyncService, "_client", _fake_client)
+    svc = CalendarSyncService(GoogleCalendarConfig())
+    eid = await svc.create_event("헬스장", datetime(2026, 6, 18, 18, 0), 45)
+    assert eid == "plain-1"
+    assert fake.inserted_plain[0][2] == "헬스장"
+    assert await svc.delete_event(eid) is True
+    assert fake.deleted == ["plain-1"]
+
+
+async def test_create_event_none_when_not_connected(test_db, monkeypatch) -> None:
+    async def _no_client(self):
+        return None
+
+    monkeypatch.setattr(CalendarSyncService, "_client", _no_client)
+    svc = CalendarSyncService(GoogleCalendarConfig())
+    assert await svc.create_event("x", datetime(2026, 6, 18, 18, 0), 30) is None
+    assert await svc.delete_event("x") is False
+
+
+async def test_events_endpoint_degrades_when_not_connected(test_db, monkeypatch) -> None:
+    """미연동: events=[] + connected=false (UI 가 연동 안내로 degrade)."""
+
+    async def _not_connected(self):
+        return False
+
+    monkeypatch.setattr(CalendarSyncService, "is_connected", _not_connected)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/gcal/events?from=2026-06-17T00:00:00&to=2026-06-24T00:00:00")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["connected"] is False
+    assert body["events"] == []
+
+
+async def test_events_endpoint_rejects_bad_dates(test_db) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/gcal/events?from=notadate&to=alsobad")
+    assert resp.status_code == 400
+
+
+async def test_create_event_endpoint_requires_summary(test_db) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/gcal/events", json={"summary": "  ", "start": "2026-06-18T18:00:00"}
+        )
+    assert resp.status_code == 400
 
 
 # ── API: 확답 게이트 ──────────────────────────────────────────────────────

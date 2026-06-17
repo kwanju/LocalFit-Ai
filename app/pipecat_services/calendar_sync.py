@@ -118,6 +118,47 @@ class CalendarSyncService:
         _workout_times_cache[cache_key] = (_time.monotonic(), times)
         return times
 
+    # ── 경량 CRUD (ADR-034): 보기/생성/삭제 ────────────────────────────
+    async def list_events(self, time_min: datetime, time_max: datetime) -> list:
+        """``time_min``~``time_max`` 의 전체 일정. 미연동/오류 → 빈 목록(degrade)."""
+        client = await self._client()
+        if client is None:
+            return []
+        try:
+            return await asyncio.to_thread(client.list_events, time_min, time_max)
+        except Exception as e:  # noqa: BLE001 — 오프라인/쿼터 → 빈 목록 degrade
+            logger.error("calendar list_events failed (empty list): {}", e)
+            return []
+
+    async def create_event(
+        self, summary: str, start: datetime, duration_min: int
+    ) -> str | None:
+        """사용자가 직접 잡는 일정 생성 → event id. 미연동/오류 → None(degrade).
+
+        사용자 명시 액션이라 즉시 쓴다(운동 플랜 등록의 확답 게이트와 별개 — ADR-034).
+        """
+        client = await self._client()
+        if client is None:
+            return None
+        end = start + timedelta(minutes=max(5, duration_min))
+        try:
+            return await asyncio.to_thread(client.insert_event, start, end, summary)
+        except Exception as e:  # noqa: BLE001
+            logger.error("calendar create_event failed: {}", e)
+            return None
+
+    async def delete_event(self, event_id: str) -> bool:
+        """일정 삭제. 미연동/오류 → False(degrade), 성공 → True."""
+        client = await self._client()
+        if client is None:
+            return False
+        try:
+            await asyncio.to_thread(client.delete_event, event_id)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("calendar delete_event failed ({}): {}", event_id, e)
+            return False
+
     # ── 등록 (§9-2, 확답 게이트) ───────────────────────────────────────
     async def _default_workout_time(self) -> time:
         """등록 이벤트 시각 = profile.available_times[0] 있으면 그것, 없으면 18:00."""

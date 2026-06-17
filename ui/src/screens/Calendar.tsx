@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchCalendar, type DayStat } from "@/api/calendar";
 import { CalendarHeatmap } from "@/components/CalendarHeatmap";
+import { MySchedulePanel } from "./MySchedulePanel";
 
 type LoadState = "loading" | "empty" | "ready" | "error";
 
@@ -76,7 +77,10 @@ export function Calendar() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-slate-950 px-4 py-6">
-      {/* Header */}
+      {/* 내 일정 — 외부 Google Calendar (ADR-034). 아래 히트맵(로컬)과 다른 데이터. */}
+      <MySchedulePanel />
+
+      {/* Header — 운동 기록 히트맵(ADR-020, 로컬 통계) */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-white">운동 기록</h1>
         {state === "ready" && !showStrip && (

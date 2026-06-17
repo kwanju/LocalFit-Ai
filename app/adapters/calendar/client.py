@@ -42,6 +42,24 @@ def _from_rfc3339(value: str) -> datetime | None:
     return parsed
 
 
+def _parse_event_dt(node: dict) -> tuple[datetime | None, bool]:
+    """events().list 의 start/end 노드 → ``(로컬 naive datetime, all_day)``.
+
+    ``dateTime`` 키면 시각 있는 일반 일정, ``date`` 키면 종일(all-day) 일정이다.
+    파싱 실패/빈 노드는 ``(None, …)`` 로 돌려 호출부가 건너뛴다.
+    """
+    date_time = node.get("dateTime")
+    if date_time:
+        return _from_rfc3339(date_time), False
+    date_only = node.get("date")
+    if date_only:
+        try:
+            return datetime.fromisoformat(date_only), True
+        except ValueError:
+            return None, True
+    return None, False
+
+
 @dataclass(frozen=True)
 class WorkoutEvent:
     """등록/조회된 운동 이벤트 한 칸(평문 값 객체 — core 타입 아님)."""
@@ -49,6 +67,20 @@ class WorkoutEvent:
     event_id: str
     start: datetime
     summary: str
+
+
+@dataclass(frozen=True)
+class CalEvent:
+    """캘린더의 임의 일정 한 칸(운동 마커 무관 전체 일정 — ADR-034 보기용 값 객체).
+
+    ``all_day`` 면 ``start``/``end`` 는 그 날짜 자정 기준(시각 의미 없음, 표시만).
+    """
+
+    event_id: str
+    summary: str
+    start: datetime
+    end: datetime
+    all_day: bool
 
 
 class GoogleCalendarClient:
@@ -146,3 +178,48 @@ class GoogleCalendarClient:
                     )
                 )
         return out
+
+    # ── 경량 CRUD (ADR-034): 전체 일정 보기/생성/삭제 ──────────────────────
+    def list_events(self, time_min: datetime, time_max: datetime) -> list[CalEvent]:
+        """``time_min``~``time_max`` 의 **모든** 일정(운동 마커 무관). 종일 일정 포함."""
+        resp = (
+            self._service.events()
+            .list(
+                calendarId=self._calendar_id,
+                timeMin=_to_rfc3339(time_min),
+                timeMax=_to_rfc3339(time_max),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        out: list[CalEvent] = []
+        for item in resp.get("items", []):
+            start, all_day = _parse_event_dt(item.get("start", {}))
+            end, _ = _parse_event_dt(item.get("end", {}))
+            if start is None:
+                continue
+            out.append(
+                CalEvent(
+                    event_id=item.get("id", ""),
+                    summary=item.get("summary", "") or "(제목 없음)",
+                    start=start,
+                    end=end or start,
+                    all_day=all_day,
+                )
+            )
+        return out
+
+    def insert_event(self, start: datetime, end: datetime, summary: str) -> str:
+        """운동 마커 없는 일반 일정 생성 → event id(사용자가 앱에서 직접 잡는 일정)."""
+        body = {
+            "summary": summary,
+            "start": {"dateTime": _to_rfc3339(start)},
+            "end": {"dateTime": _to_rfc3339(end)},
+        }
+        event = self._service.events().insert(calendarId=self._calendar_id, body=body).execute()
+        return event.get("id", "")
+
+    def delete_event(self, event_id: str) -> None:
+        """일정 삭제(우리 마커 무관 — 사용자가 목록에서 고른 임의 일정)."""
+        self._service.events().delete(calendarId=self._calendar_id, eventId=event_id).execute()

@@ -188,3 +188,49 @@ export function registerPlanEvents(): Promise<GcalRegisterResult> {
     body: JSON.stringify({ confirm: true }),
   });
 }
+
+// ── 경량 캘린더 CRUD (ADR-034, phase v4-9c) ────────────────────────────────
+// 기록 탭 "내 일정" 패널 — 전체 일정 보기/추가/삭제. 운동 플랜 등록(/plan/*)의 확답
+// 게이트와 별개: 여기는 사용자가 직접 누르는 명시 액션이라 즉시 반영한다.
+export interface GcalEvent {
+  id: string;
+  summary: string;
+  start: string; // ISO (종일이면 날짜 자정)
+  end: string;
+  all_day: boolean;
+}
+
+export interface GcalEventsResult {
+  connected: boolean; // false → 미연동(설정에서 연동 안내로 degrade)
+  events: GcalEvent[];
+}
+
+export function listGcalEvents(from: string, to: string): Promise<GcalEventsResult> {
+  const q = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  return request<GcalEventsResult>(`/api/gcal/events?${q}`);
+}
+
+export function createGcalEvent(body: {
+  summary: string;
+  start: string;
+  duration_min: number;
+}): Promise<GcalEvent> {
+  return request<GcalEvent>("/api/gcal/events", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteGcalEvent(id: string): Promise<void> {
+  return request<void>(`/api/gcal/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export interface GcalGaps {
+  connected: boolean;
+  hint: string | null;
+}
+
+/** 오늘 빈 시간 한 줄 힌트(§9-3). 미연동/오프라인이면 hint=null. */
+export function getGcalGaps(): Promise<GcalGaps> {
+  return request<GcalGaps>("/api/gcal/gaps");
+}
