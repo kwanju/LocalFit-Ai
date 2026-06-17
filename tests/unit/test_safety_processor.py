@@ -94,7 +94,8 @@ async def test_emergency_not_promoted() -> None:
 
 
 async def test_transient_fatigue_not_promoted() -> None:
-    """일시적 피로(LOW)도 영구 제약 아님."""
+    """피로는 부상이 아니라 컨디션 — SafetyGuard 가 가로채지도, 제약으로 승격하지도 않는다
+    (코치 LLM 이 log_condition 처리, ADR-023/033)."""
     cb = AsyncMock()
     await _send_with_recorder("너무 피곤해요", cb)
     cb.assert_not_awaited()

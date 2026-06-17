@@ -102,7 +102,7 @@ def _check_self_report(r: dict) -> list[Check]:
 
 def _check_condition(r: dict) -> list[Check]:
     reply = _joined(r["reply_texts"])
-    soft = any(k in reply for k in ("가벼", "줄", "쉬", "낮", "무리"))
+    soft = any(k in reply for k in ("가볍", "가벼", "부담", "줄", "쉬", "낮", "무리"))
     return [
         *_bringup(r),
         ("컨디션 발화에 코치 응답", len(r["reply_texts"]) > 0, False),

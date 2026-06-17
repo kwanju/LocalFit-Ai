@@ -1,7 +1,7 @@
 import pytest
 
 from app.core.safety import DangerLevel, SafetyGuard, SafetyResult
-from app.messages import MSG_INJURY_EMERGENCY, MSG_INJURY_LOW, MSG_INJURY_MODERATE
+from app.messages import MSG_INJURY_EMERGENCY, MSG_INJURY_MODERATE
 
 
 @pytest.fixture
@@ -90,9 +90,10 @@ class TestModerateLevel:
 
 
 # ---------------------------------------------------------------------------
-# LOW level
+# 피로·근육통은 부상이 아니라 컨디션 — SafetyGuard 가 가로채지 않고 코치(LLM)로 흘려
+# log_condition(ADR-023) 하게 한다. (이전엔 LOW 티어로 캔드 응답하던 것을 제거, ADR-033.)
 # ---------------------------------------------------------------------------
-class TestLowLevel:
+class TestFatigueIsNotFlagged:
     @pytest.mark.parametrize(
         "text",
         [
@@ -104,12 +105,11 @@ class TestLowLevel:
             "몸이 안 좋아요",
         ],
     )
-    def test_low_keywords(self, guard: SafetyGuard, text: str) -> None:
+    def test_fatigue_passes_to_coach(self, guard: SafetyGuard, text: str) -> None:
         result = guard.check(text)
-        assert result.is_unsafe is True
-        assert result.level == DangerLevel.LOW
-        assert len(result.matched_keywords) > 0
-        assert MSG_INJURY_LOW in result.response  # type: ignore[operator]
+        assert result.is_unsafe is False
+        assert result.level is None
+        assert result.matched_keywords == []
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +140,9 @@ class TestSafeInputs:
 # ---------------------------------------------------------------------------
 # Priority & edge cases
 # ---------------------------------------------------------------------------
-def test_emergency_takes_priority_over_low(guard: SafetyGuard) -> None:
-    """When multiple levels match, EMERGENCY must win."""
-    result = guard.check("뻐근하고 숨이 막혀요")
+def test_emergency_takes_priority(guard: SafetyGuard) -> None:
+    """When multiple levels match (MODERATE 아파 + EMERGENCY 숨막혀), EMERGENCY must win."""
+    result = guard.check("무릎이 아파요 숨이 막혀요")
     assert result.level == DangerLevel.EMERGENCY
 
 

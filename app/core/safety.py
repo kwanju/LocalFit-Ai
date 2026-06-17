@@ -66,17 +66,12 @@ _DANGER_PATTERNS: dict[DangerLevel, list[re.Pattern[str]]] = {
             r"결려",                    # 허리가 결려요
         ]
     ],
-    DangerLevel.LOW: [
-        re.compile(p)
-        for p in [
-            r"뻐근",                    # 몸이 뻐근해요
-            r"피곤",                    # 너무 피곤해요
-            r"힘들어",                  # 좀 힘들어요
-            r"지쳐",                    # 많이 지쳐요
-            r"지치",                    # 지치네요 (지치다 어간)
-            r"몸.{0,4}안.{0,4}좋",     # 몸이 안 좋아요
-        ]
-    ],
+    # 피로·근육통·"몸이 안 좋아요" 류는 부상이 아니라 **컨디션**이다(ADR-023). SafetyGuard
+    # 가 가로채면 LLM 우회로 log_condition + 강도 조절 제안이 안 된다(실세션 검증으로 발견:
+    # "피곤해서 가볍게" → "잠깐 쉬고 계속할까요?" 캔드 응답). 그래서 LOW 티어를 비우고
+    # 이 발화들을 코치(LLM)로 흘려보낸다. 안전 과잉 축소(ADR-033)와도 일치 — 실제 통증/
+    # 부상만 MODERATE/HIGH/EMERGENCY 로 가로챈다.
+    DangerLevel.LOW: [],
 }
 
 
