@@ -68,6 +68,11 @@ class ModelManager:
         self._config = config
         self._lock = asyncio.Lock()
         self._loaded = False
+        # 활성 세션 수. ADR-002 상 보통 0/1 이지만, dev(React StrictMode) 또는 재연결
+        # 레이스로 두 세션이 잠깐 겹칠 수 있다. 그때 한 세션의 종료가 다른 세션이 쓰는
+        # 모델을 unload 하면 안 된다(TTS executor shutdown → "cannot schedule new futures").
+        # → 마지막 세션이 끝날 때만 실제 unload (refcount).
+        self._active_sessions = 0
         self.llm: OllamaClient | None = None
         self.stt: FasterWhisperClient | None = None
         self.tts: Qwen3TTSClient | None = None
@@ -75,6 +80,15 @@ class ModelManager:
     @property
     def loaded(self) -> bool:
         return self._loaded
+
+    def session_begin(self) -> None:
+        """세션이 모델을 점유하기 시작(연결마다 1회). 겹친 세션 보호용 refcount."""
+        self._active_sessions += 1
+
+    def session_end(self) -> int:
+        """세션 종료 — 남은 활성 세션 수를 반환한다(0 이면 호출부가 unload)."""
+        self._active_sessions = max(0, self._active_sessions - 1)
+        return self._active_sessions
 
     async def load(self) -> None:
         """Parallel-load STT+TTS+LLM into VRAM. Idempotent; raises ModelLoadError.

@@ -132,6 +132,7 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C", resume: int = 0) -> 
     # while we wait so the cold start is visible, not a frozen UI. VRAM 부족이면
     # 안내 후 닫는다 (안 행복한 경로).
     manager = getattr(websocket.app.state, "models", None)
+    session_counted = False
     if manager is not None:
         if not manager.loaded:
             await websocket.send_json({"type": "coach_preparing"})
@@ -142,6 +143,10 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C", resume: int = 0) -> 
             await websocket.send_json({"type": "error", "message": str(e)})
             await websocket.close()
             return
+        # 이 세션이 모델을 점유한다(refcount). 겹친 세션이 있으면 한쪽 종료가 다른 쪽
+        # 모델을 unload 하지 않게 막는다.
+        manager.session_begin()
+        session_counted = True
 
     # Pipecat *Service 인스턴스는 단일 파이프라인 lifecycle에 종속이라 매 연결마다
     # 새로 만든다. 무거운 모델은 ModelManager(client) 안에서 세션 동안 로드된 채
@@ -570,9 +575,13 @@ async def ws_voice(websocket: WebSocket, mode: str = "C2C", resume: int = 0) -> 
     finally:
         # ADR-030: session ended → unload models, reclaim VRAM (idle ≈ baseline).
         # Guaranteed here (not only in on_client_disconnected) so an abrupt drop
-        # still frees VRAM. unload() is idempotent.
-        if manager is not None:
+        # still frees VRAM. unload() is idempotent. ★ 겹친 세션 보호: 마지막 세션이
+        # 끝날 때만 unload — 안 그러면 한 연결 종료가 다른 활성 연결의 모델을 죽인다.
+        if manager is not None and session_counted:
             try:
-                await manager.unload()
+                if manager.session_end() == 0:
+                    await manager.unload()
+                else:
+                    logger.info("ws_voice: 다른 세션이 활성 — 모델 unload 보류")
             except Exception as e:  # noqa: BLE001 — never mask the original error
                 logger.error("ModelManager unload failed: {}", e)

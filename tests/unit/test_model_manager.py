@@ -137,6 +137,31 @@ async def test_unload_reclaims_and_resets(fakes: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_overlapping_sessions_do_not_early_unload(fakes: dict) -> None:
+    """겹친 세션 보호(refcount): 두 세션 중 하나가 끝나도 다른 세션의 모델을 unload 하면
+    안 된다(이중 연결 → TTS executor shutdown 'cannot schedule new futures' 회귀)."""
+    mgr = _manager()
+    await mgr.load()
+    mgr.session_begin()  # 세션 #1
+    mgr.session_begin()  # 세션 #2 (겹침)
+
+    # #1 종료 — 아직 #2 활성이므로 unload 보류.
+    remaining = mgr.session_end()
+    assert remaining == 1
+    if remaining == 0:  # 호출부(ws_voice) 규약 모사
+        await mgr.unload()
+    assert mgr.loaded is True
+    assert fakes["tts"].released is False  # 모델 살아있음
+
+    # #2 종료 — 마지막 세션이므로 unload.
+    remaining = mgr.session_end()
+    assert remaining == 0
+    await mgr.unload()
+    assert mgr.loaded is False
+    assert fakes["tts"].released is True
+
+
+@pytest.mark.asyncio
 async def test_unload_when_idle_is_noop(fakes: dict) -> None:
     mgr = _manager()
     await mgr.unload()  # never loaded — must not raise
