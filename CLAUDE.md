@@ -40,6 +40,7 @@ LocalFit AI는 로컬 LLM 기반 개인 AI 피트니스 코치 데스크탑 앱�
 4. 현재 작업과 **직접 관련된 ADR만** (전부 읽지 말 것 — 컨텍스트 절약)
 5. `docs/conventions/coding-style.md` — 코딩 규약 (v1 자산 재활용)
 5-1. **`docs/testing-strategy.md` — 시나리오 기반 심층 테스트 전략** (버그를 사용자가 아니라 에이전트가 먼저 잡는 절차. 버그 보고 받으면 여기 §4 루프대로 직접 시나리오 구동·로그검토·박제)
+5-2. **`docs/conventions/anti-rationalization.md` — 안티-합리화 체크** (작업 마무리·버그 루프에서 자기 합리화 가로채는 표. 완료 선언 전 1분 훑기)
 6. 현재 작업의 `docs/agent-tasks/phase-XX-*.md` 작업 명세 (있다면)
 7. **v4 시작 시**: `docs/future/v4-vision.md` (deep interview 질문 §6 참조)
 8. 외부 레퍼런스 원본은 `docs/raw/`에 보관. ADR에는 링크만.
