@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.config import GoogleCalendarConfig
-from app.pipecat_services.calendar_sync import CalendarSyncService
+from app.pipecat_services.calendar_sync import MIN_EVENT_DURATION_MIN, CalendarSyncService
 
 router = APIRouter(prefix="/api/gcal", tags=["gcal"])
 
@@ -157,7 +157,7 @@ async def create_event(body: CreateEventRequest, request: Request) -> CalEventOu
     event_id = await _service(request).create_event(summary, start, body.duration_min)
     if event_id is None:
         raise HTTPException(status_code=400, detail="캘린더에 연동되어 있지 않습니다.")
-    end = start + timedelta(minutes=max(5, body.duration_min))
+    end = start + timedelta(minutes=max(MIN_EVENT_DURATION_MIN, body.duration_min))
     return CalEventOut(
         id=event_id, summary=summary, start=start.isoformat(), end=end.isoformat(), all_day=False
     )

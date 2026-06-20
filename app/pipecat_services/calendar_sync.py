@@ -48,6 +48,9 @@ class RegisterResult:
 _workout_times_cache: dict[str, tuple[float, list[time]]] = {}
 _WORKOUT_TIMES_TTL_SEC = 120.0
 
+# 등록/생성 이벤트의 최소 길이(분). config 값이 더 작아도 캘린더에 0분 이벤트가 안 생기게.
+MIN_EVENT_DURATION_MIN = 5
+
 
 class CalendarSyncService:
     def __init__(self, config: GoogleCalendarConfig) -> None:
@@ -140,7 +143,7 @@ class CalendarSyncService:
         client = await self._client()
         if client is None:
             return None
-        end = start + timedelta(minutes=max(5, duration_min))
+        end = start + timedelta(minutes=max(MIN_EVENT_DURATION_MIN, duration_min))
         try:
             return await asyncio.to_thread(client.insert_event, start, end, summary)
         except Exception as e:  # noqa: BLE001
@@ -195,7 +198,7 @@ class CalendarSyncService:
             days = await repo.list_days(plan.id)
             week_start = plan.week_start
         at = await self._default_workout_time()
-        duration = timedelta(minutes=max(5, self._config.event_duration_min))
+        duration = timedelta(minutes=max(MIN_EVENT_DURATION_MIN, self._config.event_duration_min))
         out: list[ProposedEvent] = []
         for d in days:
             if d.completed:

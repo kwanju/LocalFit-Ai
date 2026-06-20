@@ -17,6 +17,7 @@ import {
 type PanelState = "loading" | "disconnected" | "ready" | "error";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000; // 일정 표시 창: 오늘~7일 뒤
 
 function localISO(d: Date): string {
   // 타임존 오프셋을 더해 로컬 wall-clock 을 보존(toISOString 은 UTC 라 날짜가 밀림).
@@ -142,7 +143,7 @@ export function MySchedulePanel() {
       }
       const now = new Date();
       const from = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-      const to = localISO(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+      const to = localISO(new Date(now.getTime() + WEEK_MS));
       const result = await listGcalEvents(from, to);
       if (!result.connected) {
         setState("disconnected");
