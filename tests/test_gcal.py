@@ -159,6 +159,86 @@ async def test_today_gap_hint_from_busy(test_db, monkeypatch) -> None:
     assert hint == "지금부터 낮 4시까지 비어 있어요"
 
 
+# ── 어댑터: Google 실응답 파싱 (ADR-034) ──────────────────────────────────
+# _FakeClient 는 list_events 파싱을 우회하므로(이미 만든 CalEvent 반환), 정작 깨지기
+# 쉬운 raw dict→CalEvent 변환(dateTime vs date·summary 누락·종일·start 누락)은 여기서
+# fake googleapiclient service 로 직접 검증한다.
+
+
+class _FakeService:
+    """googleapiclient 의 ``events().list(...).execute()`` 플루언트 체인 대역."""
+
+    def __init__(self, resp: dict) -> None:
+        self._resp = resp
+
+    def events(self):
+        return self
+
+    def list(self, **kwargs):  # noqa: A003 — google API 이름 그대로
+        return self
+
+    def execute(self):
+        return self._resp
+
+
+def test_list_events_parses_raw_google_response() -> None:
+    from app.adapters.calendar.client import GoogleCalendarClient
+
+    # 로컬 오프셋으로 round-trip 하게 만들어 머신 타임존과 무관히 단정.
+    timed = datetime(2026, 6, 18, 18, 0).astimezone().isoformat()
+    resp = {
+        "items": [
+            {
+                "id": "1",
+                "summary": "헬스장",
+                "start": {"dateTime": timed},
+                "end": {"dateTime": timed},
+            },
+            # 종일(date only)·제목 없음
+            {"id": "2", "start": {"date": "2026-06-20"}, "end": {"date": "2026-06-21"}},
+            # start 없음 → 건너뜀
+            {"id": "3", "summary": "깨진것", "start": {}, "end": {}},
+        ]
+    }
+    client = GoogleCalendarClient(_FakeService(resp))
+    out = client.list_events(datetime(2026, 6, 18), datetime(2026, 6, 22))
+
+    assert [e.event_id for e in out] == ["1", "2"]  # 3번(start 없음)은 제외
+    timed_ev, allday_ev = out
+    assert timed_ev.all_day is False
+    assert timed_ev.start == datetime(2026, 6, 18, 18, 0)
+    assert allday_ev.all_day is True
+    assert allday_ev.start == datetime(2026, 6, 20, 0, 0)
+    assert allday_ev.summary == "(제목 없음)"  # summary 누락 → 폴백
+
+
+def test_insert_event_returns_id_and_omits_workout_marker() -> None:
+    from app.adapters.calendar.client import GoogleCalendarClient
+
+    class _InsertService:
+        def __init__(self) -> None:
+            self.body = None
+
+        def events(self):
+            return self
+
+        def insert(self, calendarId, body):  # noqa: N803 — google API 이름
+            self.body = body
+            return self
+
+        def execute(self):
+            return {"id": "new-1"}
+
+    svc = _InsertService()
+    eid = GoogleCalendarClient(svc).insert_event(
+        datetime(2026, 6, 18, 18, 0), datetime(2026, 6, 18, 18, 45), "러닝"
+    )
+    assert eid == "new-1"
+    assert svc.body["summary"] == "러닝"
+    # 일반 일정은 운동 마커(extendedProperties)를 달지 않는다 — list_workout_events 와 분리.
+    assert "extendedProperties" not in svc.body
+
+
 # ── 경량 CRUD: 보기/생성/삭제 (ADR-034) ───────────────────────────────────
 
 
