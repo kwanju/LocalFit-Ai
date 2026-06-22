@@ -115,6 +115,20 @@ grep -iE "latency\.|sentence synth|beat kind|start_set|complete" "$f" | tail -60
 
 각 항목: scenario 테스트로 자동화돼 있으면 ✅(자동), 사람이 봐야 하면 👤(수동).
 
+> **🟢 Phase 게이트 정책 (수동 검증 비차단)**: phase 완료는 **자동 검증만**으로 판정한다
+> — `pytest`(unit+scenario) + `-m ollama`(LLM 변경 시) + `pnpm test`(UI) + DB/REST 스모크.
+> 이게 green 이면 phase 완료로 보고하고 **다음 phase 로 진행한다**. 👤(수동) 항목은 자동화가
+> **물리적으로 불가능한 것만**(오디오 청취·음색·자동재생·마이크·멀티탭 체감) 여기 백로그에
+> 누적하고, phase 를 막지 않는다. 누적분은 **마일스톤 단위로 사용자가 일괄** 검증한다.
+> UI 로직은 vitest, 모델 행동은 ollama, DB 는 직접 쿼리로 **최대한 자동 대체**해 👤 를 줄인다.
+
+### 5-6. 컨디션 체크인 (phase v4-3, ADR-023)
+- [ ] 체크인 데이터 모델·세션 연결 — ✅ `test_db_models.py::test_condition_checkin_links_to_session`
+- [ ] 체크인 UX 입력/건너뛰기/선택 로직 — ✅ `ui ConditionCheckin.test.tsx`
+- [ ] 컨디션 발화 → `log_condition`(soreness) + 자동시작 금지 — ✅ `test_active_coach_llm.py::test_condition_report_logs_and_does_not_auto_start`
+- [ ] 마이그레이션 soreness 추가 + session_id nullable — ✅ `test_migrations.py`
+- [ ] 브라우저에서 모달 실제 렌더/클릭 체감 + 강도 제안 대화 자연스러움 — 👤 (백로그, 비차단)
+
 ### 5-1. 세션 생명주기
 - [ ] 세션 시작 → 종료 → 재시작 (UI `started` 리셋, 소켓 재연결) — ✅ `ws.test.ts`
 - [ ] 운동 중 기록/설정 탭 이동 → 세션 유지 — 👤 (SessionShell 구조, 수동 확인)
