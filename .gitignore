@@ -42,3 +42,8 @@ desktop.ini
 .vscode/
 .idea/
 logs/
+
+# 런타임/생성 산출물 (추적 X)
+*.stackdump
+graphify-out/
+.claude/scheduled_tasks.lock
