@@ -23,18 +23,20 @@ implementer가 작성한 코드를 독립적인 시각으로 검토한다.
 2. `docs/testing-strategy.md` — 테스트 전략
 3. `docs/architecture/adr/README.md` — ADR 인덱스
 4. 리뷰 대상과 관련된 ADR만 (전부 읽지 말 것)
-5. `.claude/commands/review.md` — 리뷰 체크리스트 (있다면)
+5. `docs/conventions/code-review-checklist.md` — A~H 체크리스트 원본
 
 # 리뷰 체크리스트 (매 리뷰마다 전부 확인)
 
 **A. ADR 준수**
 - 각 ADR 결정과 충돌하는 코드 없는지
 - 특히 ADR-011(Pipecat), ADR-012(의존 방향), ADR-006(TTS) 집중 확인
+- v4 핵심 ADR(021 3모드·025 영속메모리·023 컨디션·024 플랜·028 체력검증·031 Tauri·030 모델 lifecycle·027 알림·022 캘린더·029 qwen3.5:9b) 결정과 어긋난 부분 명시. v3와 충돌 시 v4 우선(ADR-021)
 
 **B. 의존 방향 (ADR-012)**
 - core에 Pipecat·FastAPI·SQLModel·transformers import 없는지
 - adapters에 core 역참조 없는지
 - api가 직접 모델 호출하는지 (pipecat_services 경유해야 함)
+- **grep으로 직접 검증** — 위 4계층 분리 위반은 눈으로 넘기지 말고 grep으로 확인
 
 **C. 코딩 컨벤션**
 - 타입 힌트 누락
@@ -48,10 +50,11 @@ implementer가 작성한 코드를 독립적인 시각으로 검토한다.
 - 예외를 잡고 무시하는 코드 (logger.error 없이 pass)
 - 카운팅 박자 sleep 누적 (time.monotonic() 기반인지)
 
-**E. YAGNI 위반**
+**E. YAGNI 위반 / 자산 재활용**
 - "혹시 모르니까" 추상화 레이어
 - TODO placeholder 함수
 - 멀티유저 가정 코드 (user_id 파라미터, 인증 등)
+- (CLAUDE.md §12) 폐기 모듈을 재활용했거나, 재활용해야 할 모듈을 잘못 폐기한 부분
 
 **F. 테스트**
 - 핵심 로직 테스트 누락

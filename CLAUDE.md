@@ -49,6 +49,22 @@ LocalFit AI는 로컬 LLM 기반 개인 AI 피트니스 코치 데스크탑 앱�
 
 v1 시점 ADR이 궁금하면 `_archive/v1/` 참조. v3-rewrite ADR 결정과 충돌하면 **v3가 우선**.
 
+## 2-1. 작업 라우팅 — 서브에이전트 5종 우선
+
+작업은 유형별로 `.claude/agents/` 서브에이전트를 **1차 진입점**으로 삼는다. 오케스트레이터(메인 세션)는 직접 다 처리하기보다 해당 에이전트로 위임한다.
+
+| 작업 유형 | 에이전트 | 모델 |
+|---|---|---|
+| 코드 작성·버그 수정·리팩터·테스트·Phase 실행 | `implementer` | sonnet |
+| 코드 리뷰·ADR 위반 점검·완료 후 최종 검토 | `reviewer` | opus |
+| 버그 재현·로그 분석·원인 추적·testing-strategy §4 루프 | `debugger` | sonnet |
+| post-v4 설계 탐색·기능 방향·PRD/ADR 초안 | `design-strategist` | opus |
+| ADR 작성·업데이트·결정 문서화 | `adr-writer` | sonnet |
+
+- **코드 리뷰의 단일 기준 = `reviewer` 에이전트.** (구 `/review` 프로젝트 명령은 reviewer로 흡수·폐기 — 2026-06-22)
+- 전역 스킬(`/code-review`, `/simplify`, `/verify` 등)은 **보조 도구**다 — 에이전트 흐름을 대체하지 않고, 필요 시 에이전트나 오케스트레이터가 호출.
+- 설계는 `design-strategist`가 방향을 확정한 뒤에야 `adr-writer`(문서화)·`implementer`(구현)로 넘어간다. 역순 금지.
+
 ## 3. 절대 하지 말 것 (위반 시 작업 거부 또는 revert)
 
 - ❌ PRD v4에 없는 기능 임의 추가
