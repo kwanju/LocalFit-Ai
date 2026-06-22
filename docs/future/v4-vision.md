@@ -229,3 +229,69 @@ v4 를 본격 시작하려면 비전·범위·우선순위에 대한 deep interv
 - 새 세션에서 답이 채워질 때마다 이 문서를 업데이트
 - 답이 확정되면 해당 항목 옆에 `→ ADR-XXX 발행됨` 표시
 - 모든 §6 질문이 답 채워지고 ADR 이 발행되면 이 문서를 `_archive/v3/` 로 이동 + v4 ADR 인덱스로 교체
+
+## 9. 다음 버전(post-v4) 백로그 — 구현·적용 확정
+
+> v4 범위 밖이지만 **다음 버전에서 구현·적용하기로 확정**한 항목. v4 인덱스 종료 후
+> 다음 버전 착수 시 이 섹션을 진입점으로 ADR/phase 발행.
+
+### 9-1. 바지-인(barge-in) Dual-Whisper STT — 다음 버전 적용 확정 (2026-06-22)
+
+- **무엇**: 사용자가 코치 발화 중 끼어들 때(barge-in)의 반응을 빠르게. STT를 역할 분리:
+  - **fast 모델(whisper small 등)** = 끼어들기 감지 전용 (저지연)
+  - **large-v3-turbo** = 최종 발화 정확 전사 (현행 유지)
+- **출처**: Persona Engine(`fagenorn/handcrafted-persona-engine`)의 "Dual-Whisper via Silero VAD" 파이프라인. 같은 패턴을 우리 Pipecat + Silero VAD 위에 보조 STT로 얹는다.
+- **현행 대비**: v4는 인터럽트/턴검출을 Pipecat + Silero VAD에 외주(ADR-007/011)하고 STT는 large-v3-turbo 단일. VAD는 음성 에너지/turn만 보고 단어를 전사하지 않으므로, barge-in 반응을 더 빠르고 정확하게 만들 여지가 있음.
+- **고려사항**: small 모델 추가 로드 → VRAM(16GB 베이스라인, §6-8) + 모델 lifecycle(ADR-030 on-demand 로드/언로드)와의 정합성 검토 필요. 첫 청크 레이턴시·세션 콜드스타트 예산에 small STT 포함.
+- **검증된 부가 패턴(같은 출처, 별건)**: LLM 출력에 인라인 감정 태그(`[EMOTION:..]`) 방출 → 후처리로 코치 톤/감정 변조. 다음 버전 코치 톤 작업 시 참고. (필수 아님, 메모) → §9-2 아바타 표정 구동과 동일 메커니즘이므로 묶어서 구현.
+
+### 9-2. 코치 캐릭터 아바타(Live2D) 시각화 — 다음 버전 구현 확정 (2026-06-22)
+
+- **무엇**: 코치에 Live2D 2D 캐릭터를 입혀 **화면-있는 모드(C2C 등)에서 시각화**. 코치 발화에 맞춰 입 모양(lip-sync) + 표정(감정) 애니메이션. 음성-only/소리-only 모드(S2S 등 3모드 §6-10)는 그대로 — 아바타는 **옵션 시각 레이어**로 얹어 기존 모드를 깨지 않음.
+- **우리 스택 기준 구현 경로(웹 기반)** — UI가 React+Vite(Tauri 웹뷰, ADR-031)이므로 native 오버레이가 아닌 **웹 렌더링**이 정답:
+  - **렌더링**: `pixi-live2d-display`(guansss, PixiJS 플러그인, Cubism 2.1+4 지원). lip-sync는 포크/패치판 `pixi-live2d-display-lipsyncpatch`(npm) 사용.
+  - **립싱크**: 우리는 이미 faster-qwen3-tts의 스트리밍 오디오를 받음 → WebAudio `AnalyserNode`로 RMS 진폭(0~1) 추출 → Live2D `ParamMouthOpenY`(0 닫힘~1 열림, ×0.8 보정)에 프레임 단위 주입. **별도 모델·서버 불필요**, 기존 오디오 스트림 재사용.
+  - **표정/감정**: §9-1 부가 패턴의 `[EMOTION:..]` 인라인 태그를 그대로 활용 → LLM이 방출, 후처리로 TTS 입력에서 제거, 동시에 Live2D 표정 모션 트리거. (lip-sync와 한 작업으로 묶음)
+  - **에셋**: Live2D 모델(`.model3.json` + 텍스처 + 모션) 필요. 무료 샘플 모델 또는 구매/외주. **라이선스 확인 필수**(상업/배포 조건).
+- **참고 프로젝트 우선순위**:
+  - ★ **Open-LLM-VTuber** (`Open-LLM-VTuber/Open-LLM-VTuber`) — **우리와 가장 가까운 레퍼런스**. 로컬 LLM(Ollama)+faster-whisper+Live2D, **웹 모드 존재**, ASR/TTS 스왑 가능 모듈 구조. "LLM 응답의 표정 키워드를 시스템 프롬프트에 주입하고 TTS 출력에선 제거" = 우리 §9-1 감정태그 패턴과 동일 → 설계 검증. 구현 시 1차 참고.
+  - **Persona Engine** (`fagenorn/handcrafted-persona-engine`) — 사용자가 처음 지목. 단 **.NET/Windows native 오버레이 + Spout/OBS + RVC + VBridger/Audio2Face**로 무거움 → 우리 React 웹뷰에 **직접 이식 부적합**. 아이디어(dual-Whisper §9-1, 감정태그)만 차용, 구현 경로는 Open-LLM-VTuber 쪽이 맞음.
+  - 라이브러리 레퍼런스: `pixi-live2d-display`(범용 웹 Live2D), Live2D Cubism SDK for Web 공식 립싱크 튜토(WAV 볼륨 기반), TEN Framework Live2D voice agent 예제, `wawa-lipsync`(서버리스 브라우저 립싱크 대안).
+- **의존성/롤백 풋프린트** (§10 방식 적용 대상): **UI 전용 추가**(pnpm: `pixi.js`, `pixi-live2d-display-lipsyncpatch`, Cubism Core 런타임). 백엔드는 감정태그 방출만 선택 추가. **UI 토글 뒤로 격리 가능** → 롤백 비용 낮음(끄면 기존 모드 그대로). DB/스키마/도메인 코어 변경 0.
+
+## 10. 다음 버전 개발 방식 — 사전결정 자동진행 + 권장 구현 + 롤백 메모 (2026-06-22 확정)
+
+> 사용자 질문에 대한 답이자, 다음 버전의 **작업 진행 규약**. 핵심 의도:
+> ① 정할 수 있는 건 **시작 전에 일괄 결정**해 개발이 멈추지 않고 자동 진행되게,
+> ② 개발 중 튀어나오는 선택지는 **권장안으로 구현하되**, 완료 후 사용자가 **검토·롤백·수정** 가능하도록 흔적을 남긴다.
+
+### 10-1. 결론: 가능하다 (단, 두 층으로 나눠서)
+
+선택지를 **두 부류로 분리**하면 둘 다 성립한다. 무리 없이 우리 기존 패턴(ADR 사전결정, ConfirmRule, 안티-합리화 체크) 위에 얹힌다.
+
+- **A. 예측 가능한 결정 → 시작 전 일괄 확정(자동진행 연료)**: v4-vision §6 deep-interview가 바로 이 방식이었음(질문 묶음 → 답 확정 → ADR-021~031 발행 → phase 자동 진행). **검증된 템플릿.** 다음 버전도 착수 전 deep-interview 1회로 알려진 결정(모델·라이브러리·범위·UX)을 ADR로 못 박으면, 개발 중 "사용자에게 질문하고 멈춤"이 거의 사라진다.
+- **B. 개발 중 발생하는 미세 선택 → 권장안 구현 + Decision Ledger 기록(사후 롤백)**: 사전에 못 박기엔 너무 잘거나, 코드를 짜봐야 보이는 선택. 멈추지 않고 **권장 기본값으로 구현**하되, 나중에 뒤집을 수 있도록 추적 흔적을 남긴다(아래 10-2).
+
+### 10-2. Decision Ledger 규약 (B 부류 처리)
+
+목적: "개발 다 끝난 뒤 사용자가 한자리에서 검토 → 마음에 안 드는 선택만 롤백" 을 **실제로 가능**하게.
+
+1. **원장 파일**: `docs/decisions/decision-ledger.md` (다음 버전 착수 시 생성). 각 잠정 결정을 1행으로:
+   - `D-NNN` 안정 ID · 한 줄 결정 · **권장 근거** · **고려한 대안** · **영향 파일(의존성 풋프린트)** · 상태(`provisional`→사용자검토 후 `kept`/`rolled-back`).
+2. **코드 마커**: 결정이 박힌 모든 지점에 grep 가능한 주석 — `# DECISION:D-NNN (provisional, recommended) — see decision-ledger.md` (TS는 `// DECISION:D-NNN`). → 롤백 시 `DECISION:D-NNN` grep 한 번으로 **모든 touch point**가 잡힘. 의존성 코드 추적이 이 grep으로 성립.
+3. **커밋 격리**: B 부류 결정은 **결정별 독립 커밋**(`feat(D-NNN): ...`). → 롤백 = 해당 커밋 revert 또는 마커 지점 수정. 한 결정이 schema+API+UI로 퍼져도 커밋 단위로 묶여 추적 가능.
+4. **격리 가능하면 격리**: 진짜 스왑 가능한 선택(예: 모델·임계값·아바타 on/off)은 `config.yaml`/UI 토글 뒤에 둬서 롤백을 **코드 수정 없이** 만든다. 격리가 비싸면(억지 추상화) 하지 않음(YAGNI) — 대신 마커+커밋으로 추적성만 확보.
+5. **완료 보고에 원장 요약**: 작업 완료 시 §9 보고 형식에 "이번에 쌓인 D-NNN 목록 + 검토 권장 항목" 한 묶음 추가. 사용자가 그걸 보고 일괄 검토.
+
+### 10-3. 한계 (정직하게)
+
+- **완전 자동 롤백은 비현실적**: 도메인/스키마로 깊게 퍼진 결정은 토글 한 번으로 못 되돌림. Ledger가 주는 건 *추적성+격리*지 *마법 되돌리기*가 아님. 그래서 "격리 가능한 건 토글로, 아니면 커밋+grep으로" 두 단계로 둠.
+- **안전 직결 결정은 B로 미루지 않음**: 부상/제약/안전 가드(ADR-013 SafetyGuard, ConfirmRule)는 권장 자동진행 대상에서 **제외** — 반드시 A(사전 확정)로. v3 회고 "LLM 마음대로" 경고 정신 유지.
+- **A의 품질이 자동진행의 상한**: 사전 deep-interview가 부실하면 B가 비대해지고 사후 검토 부담이 커짐. 착수 전 인터뷰에 시간 투자하는 게 ROI.
+
+### 10-4. 다음 버전 착수 시 첫 단계 (이 방식 적용)
+
+1. 다음 버전 deep-interview(§6 형식) — Live2D 아바타(§9-2)·dual-Whisper(§9-1) 포함 알려진 결정 일괄 확정 → ADR 발행 (A 부류).
+2. `docs/decisions/decision-ledger.md` 생성 + `DECISION:` 마커 컨벤션을 conventions에 1줄 추가.
+3. phase 진행 — A는 자동, B는 권장구현+원장기록.
+4. 완료 후 원장 검토 세션 → `kept`/`rolled-back` 확정.

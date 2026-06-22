@@ -160,3 +160,29 @@ def get_tts_adapter(config) -> TTSAdapter:
 - 컴포넌트는 PascalCase, 파일명도 PascalCase
 - API 호출은 `ui/src/api/`에 집중 (컴포넌트에서 직접 fetch 금지)
 - Tailwind 클래스 우선, 커스텀 CSS 최소화
+
+## 10. Decision 마커 (잠정 결정 추적 — post-v4 개발 방식)
+
+> 배경·전체 규약: `docs/future/v4-vision.md` §10. 개발 중 "권장안으로 일단 구현하되 사후 롤백 가능"한
+> 선택지(§10 B 부류)에만 사용. 사전 확정된 결정(ADR)에는 붙이지 않는다.
+
+개발 중 멈추지 않고 권장 기본값으로 짠 잠정 선택은, 박힌 **모든 지점**에 grep 가능한 마커를 단다.
+나중에 `DECISION:D-NNN` 한 번 grep 하면 그 결정의 의존성 touch point가 전부 잡혀 롤백/수정이 가능하다.
+
+```python
+# DECISION:D-007 (provisional, recommended) — 휴식 기본 60s. 대안 90s. see docs/decisions/decision-ledger.md
+REST_DEFAULT_SEC = 60
+```
+
+```ts
+// DECISION:D-012 (provisional, recommended) — 아바타 lip-sync RMS gain 0.8. see docs/decisions/decision-ledger.md
+const LIP_SYNC_GAIN = 0.8;
+```
+
+규칙:
+- 형식 고정: `DECISION:D-NNN (provisional, recommended) — <한 줄 결정/대안> see docs/decisions/decision-ledger.md`
+- `D-NNN` ID는 `docs/decisions/decision-ledger.md` 원장과 1:1 (원장에 결정·근거·대안·영향파일·상태 기록).
+- 같은 결정의 모든 코드 지점에 **동일 ID** — grep으로 전부 잡히게.
+- 결정별 **독립 커밋**(`feat(D-NNN): ...`) 권장 → 커밋 revert 로도 롤백 가능.
+- 사용자 검토 후 `kept` 확정되면 마커 제거(또는 원장에서 상태만 갱신), `rolled-back` 이면 grep 해서 정리.
+- ❌ **안전 직결(SafetyGuard/ConfirmRule/부상·제약)에는 사용 금지** — 그건 사전 확정(ADR) 대상이지 잠정 결정이 아니다.
