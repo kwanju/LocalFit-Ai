@@ -9,7 +9,7 @@ description: >
   - 테스트 작성
   - 리팩터링
   설계 탐색/방향 결정은 이 에이전트 사용 금지.
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 # 역할

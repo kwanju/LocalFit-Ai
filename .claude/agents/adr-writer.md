@@ -8,7 +8,7 @@ description: >
   - "이 결정 ADR로 남겨줘"
   설계 방향 결정은 design-strategist가 먼저 완료한 후 이 에이전트 사용.
   설계 탐색 자체는 하지 않음.
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 # 역할

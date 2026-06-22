@@ -10,7 +10,7 @@ description: >
   - "다음 PRD 어떻게 잡을까?"
   - v4-vision.md §9~§10(post-v4 백로그·개발 방식) 관련 모든 작업
   구현(코드 작성/버그 수정)은 이 에이전트 사용 금지.
-model: claude-opus-4-8
+model: opus
 ---
 
 # 역할

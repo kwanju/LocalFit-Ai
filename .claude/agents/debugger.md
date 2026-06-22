@@ -9,7 +9,7 @@ description: >
   - 카운트 뭉침·드롭, 음성 끊김, 세션 이상 등 런타임 버그
   - "testing-strategy.md §4 루프 돌려줘"
   수정 코드 작성은 하지 않음. 원인과 위치 파악까지만.
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 # 역할

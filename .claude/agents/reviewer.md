@@ -8,7 +8,7 @@ description: >
   - "코드 품질 체크해줘"
   - Phase 완료 후 최종 검토
   구현(코드 수정/작성)은 하지 않음. 문제점 지적과 개선안 제시만.
-model: claude-opus-4-8
+model: opus
 ---
 
 # 역할
